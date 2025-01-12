@@ -1,4 +1,7 @@
-import eventManager from '../../../eventManager';
+/* eslint-disable multiline-comment-style */
+
+import eventManager, { FilterHandler } from '../../../eventManager';
+
 
 /**
  * @ignore
@@ -7,11 +10,11 @@ import eventManager from '../../../eventManager';
  * so for now disable filters.
  */
 export default class JoplinFilters {
-	async on(name: string, callback: Function) {
+	public async on(name: string, callback: FilterHandler) {
 		eventManager.filterOn(name, callback);
 	}
 
-	async off(name: string, callback: Function) {
+	public async off(name: string, callback: FilterHandler) {
 		eventManager.filterOff(name, callback);
 	}
 }

@@ -1,6 +1,8 @@
-import { useState, useCallback } from 'react';
-import Logger from '@joplin/lib/Logger';
+import { useState, useCallback, MutableRefObject, useEffect } from 'react';
+import Logger from '@joplin/utils/Logger';
 import { SearchMarkers } from './useSearchMarkers';
+import { focus } from '@joplin/lib/utils/focusHandler';
+const CommandService = require('@joplin/lib/services/CommandService').default;
 
 const logger = Logger.create('useNoteSearchBar');
 
@@ -24,9 +26,21 @@ function defaultLocalSearch(): LocalSearch {
 	};
 }
 
-export default function useNoteSearchBar() {
+export interface UseNoteSearchBarProps {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+	noteSearchBarRef: MutableRefObject<any>;
+}
+
+export default function useNoteSearchBar({ noteSearchBarRef }: UseNoteSearchBarProps) {
 	const [showLocalSearch, setShowLocalSearch] = useState(false);
 	const [localSearch, setLocalSearch] = useState<LocalSearch>(defaultLocalSearch());
+
+
+	useEffect(() => {
+		if (showLocalSearch && noteSearchBarRef.current) {
+			focus('useNoteSearchBar', noteSearchBarRef.current);
+		}
+	}, [showLocalSearch, noteSearchBarRef]);
 
 	const onChange = useCallback((query: string) => {
 		// A query that's too long would make CodeMirror throw an exception
@@ -50,7 +64,7 @@ export default function useNoteSearchBar() {
 
 	const noteSearchBarNextPrevious = useCallback((inc: number) => {
 		setLocalSearch((prev: LocalSearch) => {
-			const ls = Object.assign({}, prev);
+			const ls = { ...prev };
 			ls.selectedIndex += inc;
 			ls.timestamp = Date.now();
 			if (ls.selectedIndex < 0) ls.selectedIndex = ls.resultCount - 1;
@@ -70,6 +84,7 @@ export default function useNoteSearchBar() {
 	const onClose = useCallback(() => {
 		setShowLocalSearch(false);
 		setLocalSearch(defaultLocalSearch());
+		void CommandService.instance().execute('focusElementNoteBody');
 	}, []);
 
 	const setResultCount = useCallback((count: number) => {
@@ -90,6 +105,7 @@ export default function useNoteSearchBar() {
 				selectedIndex: localSearch.selectedIndex,
 				separateWordSearch: false,
 				searchTimestamp: localSearch.timestamp,
+				withSelection: true,
 			},
 			keywords: [
 				{

@@ -1,7 +1,7 @@
 import { beforeAllDb, afterAllTests, beforeEachDb, createItemTree, createUserAndSession, parseHtml } from '../../utils/testing/testUtils';
 import { execRequest } from '../../utils/testing/apiUtils';
 
-describe('index_items', function() {
+describe('index_items', () => {
 
 	beforeAll(async () => {
 		await beforeAllDb('index_items');
@@ -15,9 +15,10 @@ describe('index_items', function() {
 		await beforeEachDb();
 	});
 
-	test('should list the user items', async function() {
+	test('should list the user items', async () => {
 		const { user: user1, session: session1 } = await createUserAndSession(1, true);
 
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 		const items: any = {};
 		for (let i = 1; i <= 150; i++) {
 			items[(`${i}`).padStart(32, '0')] = {};

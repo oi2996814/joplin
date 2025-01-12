@@ -1,15 +1,18 @@
 import { PluginStates } from '@joplin/lib/services/plugins/reducer';
 import * as React from 'react';
 import NoteListUtils from './utils/NoteListUtils';
+import { Dispatch } from 'redux';
+import { ThemeStyle } from '@joplin/lib/theme';
 
-const { buildStyle } = require('@joplin/lib/theme');
-const bridge = require('@electron/remote').require('./bridge').default;
+import { buildStyle } from '@joplin/lib/theme';
+import bridge from '../services/bridge';
 
 interface MultiNoteActionsProps {
 	themeId: number;
 	selectedNoteIds: string[];
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	notes: any[];
-	dispatch: Function;
+	dispatch: Dispatch;
 	watchedNoteFiles: string[];
 	plugins: PluginStates;
 	inConflictFolder: boolean;
@@ -17,7 +20,7 @@ interface MultiNoteActionsProps {
 }
 
 function styles_(props: MultiNoteActionsProps) {
-	return buildStyle('MultiNoteActions', props.themeId, (theme: any) => {
+	return buildStyle('MultiNoteActions', props.themeId, (theme: ThemeStyle) => {
 		return {
 			root: {
 				display: 'inline-flex',
@@ -40,9 +43,10 @@ function styles_(props: MultiNoteActionsProps) {
 export default function MultiNoteActions(props: MultiNoteActionsProps) {
 	const styles = styles_(props);
 
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	const multiNotesButton_click = (item: any) => {
 		if (item.submenu) {
-			item.submenu.popup(bridge().window());
+			item.submenu.popup({ window: bridge().activeWindow() });
 		} else {
 			item.click();
 		}
@@ -67,7 +71,7 @@ export default function MultiNoteActions(props: MultiNoteActionsProps) {
 		itemComps.push(
 			<button key={item.label} style={styles.button} onClick={() => multiNotesButton_click(item)}>
 				{item.label}
-			</button>
+			</button>,
 		);
 	}
 

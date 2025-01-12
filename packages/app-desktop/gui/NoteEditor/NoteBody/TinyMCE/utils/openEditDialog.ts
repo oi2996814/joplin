@@ -1,18 +1,22 @@
 import { _ } from '@joplin/lib/locale';
 import { MarkupToHtml } from '@joplin/renderer';
+import { TinyMceEditorEvents } from './types';
+import { focus } from '@joplin/lib/utils/focusHandler';
 const taboverride = require('taboverride');
 
 interface SourceInfo {
 	openCharacters: string;
 	closeCharacters: string;
 	content: string;
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	node: any;
 	language: string;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 function dialogTextArea_keyDown(event: any) {
 	if (event.key === 'Tab') {
-		window.requestAnimationFrame(() => event.target.focus());
+		window.requestAnimationFrame(() => focus('openEditDialog::dialogTextArea_keyDown', event.target));
 	}
 }
 
@@ -32,6 +36,7 @@ function enableTextAreaTab(enable: boolean) {
 	}
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 function findBlockSource(node: any): SourceInfo {
 	const sources = node.getElementsByClassName('joplin-source');
 	if (!sources.length) throw new Error('No source for node');
@@ -46,7 +51,7 @@ function findBlockSource(node: any): SourceInfo {
 	};
 }
 
-function newBlockSource(language: string = '', content: string = '', previousSource: SourceInfo = null): SourceInfo {
+function newBlockSource(language = '', content = '', previousSource: SourceInfo = null): SourceInfo {
 	let fence = '```';
 
 	if (language === 'katex') {
@@ -76,6 +81,7 @@ function editableInnerHtml(html: string): string {
 	return editable[0].innerHTML;
 }
 
+// eslint-disable-next-line @typescript-eslint/ban-types, @typescript-eslint/no-explicit-any -- Old code before rule was applied, Old code before rule was applied
 export default function openEditDialog(editor: any, markupToHtml: any, dispatchDidUpdate: Function, editable: any) {
 	const source = editable ? findBlockSource(editable) : newBlockSource();
 
@@ -86,9 +92,10 @@ export default function openEditDialog(editor: any, markupToHtml: any, dispatchD
 			codeTextArea: source.content,
 			languageInput: source.language,
 		},
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 		onSubmit: async (dialogApi: any) => {
 			const newSource = newBlockSource(dialogApi.getData().languageInput, dialogApi.getData().codeTextArea, source);
-			const md = `${newSource.openCharacters}${newSource.content.trim()}${newSource.closeCharacters}`;
+			const md = `${newSource.openCharacters}${newSource.content}${newSource.closeCharacters}`;
 			const result = await markupToHtml.current(MarkupToHtml.MARKUP_LANGUAGE_MARKDOWN, md, { bodyOnly: true });
 
 			// markupToHtml will return the complete editable HTML, but we only
@@ -102,7 +109,7 @@ export default function openEditDialog(editor: any, markupToHtml: any, dispatchD
 			}
 
 			dialogApi.close();
-			editor.fire('joplinChange');
+			editor.fire(TinyMceEditorEvents.JoplinChange);
 			dispatchDidUpdate(editor);
 		},
 		onClose: () => {

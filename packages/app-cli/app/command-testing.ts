@@ -1,4 +1,4 @@
-const { BaseCommand } = require('./base-command.js');
+const BaseCommand = require('./base-command').default;
 import { reg } from '@joplin/lib/registry';
 import Note from '@joplin/lib/models/Note';
 import uuid from '@joplin/lib/uuid';
@@ -6,11 +6,13 @@ import populateDatabase from '@joplin/lib/services/debug/populateDatabase';
 import { readCredentialFile } from '@joplin/lib/utils/credentialFiles';
 import JoplinServerApi from '@joplin/lib/JoplinServerApi';
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 function randomElement(array: any[]): any {
 	if (!array.length) return null;
 	return array[Math.floor(Math.random() * array.length)];
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 function itemCount(args: any) {
 	const count = Number(args.arg0);
 	if (!count || isNaN(count)) throw new Error('Note count must be specified');
@@ -18,19 +20,20 @@ function itemCount(args: any) {
 }
 
 class Command extends BaseCommand {
-	usage() {
+	public usage() {
 		return 'testing <command> [arg0]';
 	}
 
-	description() {
+	public description() {
 		return 'testing';
 	}
 
-	enabled() {
+	public enabled() {
 		return false;
 	}
 
-	options(): any[] {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+	public options(): any[] {
 		return [
 			['--folder-count <count>', 'Folders to create'],
 			['--note-count <count>', 'Notes to create'],
@@ -40,7 +43,8 @@ class Command extends BaseCommand {
 		];
 	}
 
-	async action(args: any) {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+	public async action(args: any) {
 		const { command, options } = args;
 
 		if (command === 'populate') {
@@ -53,6 +57,7 @@ class Command extends BaseCommand {
 			});
 		}
 
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 		const promises: any[] = [];
 
 		if (command === 'createRandomNotes') {
@@ -85,7 +90,7 @@ class Command extends BaseCommand {
 
 			for (let i = 0; i < noteCount; i++) {
 				const noteId = randomElement(noteIds);
-				promises.push(Note.delete(noteId));
+				promises.push(Note.delete(noteId, { sourceDescription: 'command-testing' }));
 			}
 		}
 
@@ -118,6 +123,7 @@ class Command extends BaseCommand {
 			}
 			await Promise.all(promises);
 
+			// eslint-disable-next-line no-console
 			console.info(await api.exec('GET', 'api/items/root:/testing:'));
 		}
 

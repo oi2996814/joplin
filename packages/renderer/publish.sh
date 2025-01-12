@@ -3,9 +3,9 @@ set -e
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 cd "$SCRIPT_DIR"
-yarn run buildAssets
-yarn version patch
-yarn publish
+yarn buildAssets
+npm version patch
+npm publish
 
 NEW_VERSION=$(cat package.json | jq -r .version)
 git add -A

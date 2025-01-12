@@ -10,6 +10,7 @@
 // scale.
 
 interface Record {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	value: any;
 	expiredTime: number;
 }
@@ -29,7 +30,7 @@ export default class Cache {
 	private expirableKeys_: ExpirableKeys = {};
 	private recordKeyHistory_: string[] = [];
 
-	constructor(maxRecords: number = 50) {
+	public constructor(maxRecords = 50) {
 		this.maxRecords_ = maxRecords;
 	}
 
@@ -55,6 +56,7 @@ export default class Cache {
 		}
 	}
 
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	public value(key: string, defaultValue: any = undefined): any {
 		this.checkExpiredRecords();
 		if (key in this.records_) return this.records_[key].value;
@@ -62,7 +64,8 @@ export default class Cache {
 		return defaultValue;
 	}
 
-	public setValue(key: string, value: any, ttl: number = 0) {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+	public setValue(key: string, value: any, ttl = 0) {
 		this.checkExpiredRecords();
 
 		this.records_[key] = {

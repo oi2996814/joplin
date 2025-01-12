@@ -1,74 +1,46 @@
-it('should pass', async function() {
-	expect(true).toBe(true);
+import { DbConnection, versionCheck } from './db';
+import { } from './env';
+import { DatabaseConfigClient } from './utils/types';
+
+describe('db', () => {
+
+	const mockedDb = (version: string, client: DatabaseConfigClient = DatabaseConfigClient.PostgreSQL) => {
+		return {
+			select: () => {
+				return {
+					first: () => ({
+						version,
+					}),
+				};
+			}
+			,
+			raw: () => '',
+			client: {
+				config: { client },
+			},
+		} as unknown as DbConnection;
+	};
+
+	it.each(
+		[
+			'PostgreSQL 15.3 (Debian 15.3-1.pgdg120+1) on x86_64-pc-linux-gnu, compiled by gcc (Debian 12.2.0-14) 12.2.0, 64-bit',
+			'PostgreSQL 16.3, compiled by Visual C++ build 1938, 64-bit"',
+		],
+	)('should handle versionCheck on all known string versions', (versionDescription: string) => {
+
+		expect(versionCheck(mockedDb(versionDescription))).resolves.toBe(undefined);
+	});
+
+	it.each([
+		'PostgreSQL 11.16 (Debian 11.16-1.pgdg90+1) on x86_64-pc-linux-gnu, compiled by gcc (Debian 6.3.0-18+deb9u1) 6.3.0 20170516, 64-bit',
+	])('should throw because it is a outdated version', (versionDescription: string) => {
+
+		expect(versionCheck(mockedDb(versionDescription))).rejects.toThrow(`Postgres version not supported: ${versionDescription}. Min required version is: 12.0`);
+	});
+
+	it('should not check version if client is not SQLite', () => {
+		const sqliteDb = mockedDb('invalid version', DatabaseConfigClient.SQLite);
+
+		expect(versionCheck(sqliteDb)).resolves.toBe(undefined);
+	});
 });
-
-// import { afterAllTests, beforeAllDb, beforeEachDb, db } from "./utils/testing/testUtils";
-// import sqlts from '@rmp135/sql-ts';
-// import config from "./config";
-// import { connectDb, DbConnection, disconnectDb, migrateDown, migrateList, migrateUp, nextMigration } from "./services/database/types";
-
-// async function dbSchemaSnapshot(db:DbConnection):Promise<any> {
-// 	return sqlts.toObject({
-// 		client: 'sqlite',
-// 		knex: db,
-// 		// 'connection': {
-// 		// 	'filename': config().database.name,
-// 		// },
-// 		useNullAsDefault: true,
-// 	} as any)
-
-// 	// return JSON.stringify(definitions);
-// }
-
-// describe('db', function() {
-
-// 	beforeAll(async () => {
-// 		await beforeAllDb('db', { autoMigrate: false });
-// 	});
-
-// 	afterAll(async () => {
-// 		await afterAllTests();
-// 	});
-
-// 	beforeEach(async () => {
-// 		await beforeEachDb();
-// 	});
-
-// 	it('should allow downgrading schema', async function() {
-// 		const ignoreAllBefore = '20210819165350_user_flags';
-// 		let startProcessing = false;
-
-// 		//console.info(await dbSchemaSnapshot());
-
-// 		while (true) {
-// 			await migrateUp(db());
-
-// 			if (!startProcessing) {
-// 				const next = await nextMigration(db());
-// 				if (next === ignoreAllBefore) {
-// 					startProcessing = true;
-// 				} else {
-// 					continue;
-// 				}
-// 			}
-
-// 			if (!(await nextMigration(db()))) break;
-
-// 			// await disconnectDb(db());
-// 			// const beforeSchema = await dbSchemaSnapshot(db());
-// 			// console.info(beforeSchema);
-// 			// await connectDb(db());
-
-// 			// await migrateUp(db());
-// 			// await migrateDown(db());
-
-// 			// const afterSchema = await dbSchemaSnapshot(db());
-
-// 			// // console.info(beforeSchema);
-// 			// // console.info(afterSchema);
-
-// 			// expect(beforeSchema).toEqual(afterSchema);
-// 		}
-// 	});
-
-// });

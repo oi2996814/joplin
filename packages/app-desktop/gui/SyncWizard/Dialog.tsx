@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { useState, useRef, useCallback } from 'react';
+import { useRef, useCallback } from 'react';
 import { _ } from '@joplin/lib/locale';
 import DialogButtonRow from '../DialogButtonRow';
 import Dialog from '../Dialog';
@@ -9,13 +9,11 @@ import SyncTargetRegistry, { SyncTargetInfo } from '@joplin/lib/SyncTargetRegist
 import useElementSize from '@joplin/lib/hooks/useElementSize';
 import Button, { ButtonLevel } from '../Button/Button';
 import bridge from '../../services/bridge';
-import StyledInput from '../style/StyledInput';
 import Setting from '@joplin/lib/models/Setting';
-import SyncTargetJoplinCloud from '@joplin/lib/SyncTargetJoplinCloud';
-import StyledLink from '../style/StyledLink';
 
 interface Props {
 	themeId: number;
+	// eslint-disable-next-line @typescript-eslint/ban-types -- Old code before rule was applied
 	dispatch: Function;
 }
 
@@ -24,14 +22,10 @@ const StyledRoot = styled.div`
 	max-width: 1200px;
 `;
 
-const SyncTargetDescription = styled.div<{height: number}>`
+const SyncTargetDescription = styled.div<{ height: number }>`
 	${props => props.height ? `height: ${props.height}px` : ''};
 	margin-bottom: 1.3em;
 	line-height: ${props => props.theme.lineHeight};
-	font-size: 16px;
-`;
-
-const CreateAccountLink = styled(StyledLink)`
 	font-size: 16px;
 `;
 
@@ -69,7 +63,7 @@ const SyncTargetLogo = styled.img`
 	margin-right: 0.4em;
 `;
 
-const SyncTargetBox = styled.div<{faded: boolean}>`
+const SyncTargetBox = styled.div`
 	display: flex;
 	flex: 1;
 	flex-direction: column;
@@ -78,10 +72,10 @@ const SyncTargetBox = styled.div<{faded: boolean}>`
 	background-color: ${props => props.theme.backgroundColor};
 	border: 1px solid ${props => props.theme.dividerColor};
 	border-radius: 8px;
-	padding: 0.8em 2.2em 2em 2.2em;
+	padding: 2em 2.2em 2em 2.2em;
 	margin-right: 1em;
 	max-width: 400px;
-	opacity: ${props => props.faded ? 0.5 : 1};
+	opacity: 1;
 `;
 
 const FeatureList = styled.div`
@@ -96,7 +90,7 @@ const FeatureIcon = styled.i`
 	position: absolute;
 `;
 
-const FeatureLine = styled.div<{enabled: boolean}>`
+const FeatureLine = styled.div<{ enabled: boolean }>`
 	margin-bottom: .5em;
 	opacity: ${props => props.enabled ? 1 : 0.5};
 	position: relative;
@@ -116,14 +110,12 @@ const SelectButton = styled(Button)`
     font-size: 1em;
 `;
 
-const JoplinCloudLoginForm = styled.div`
-	display: flex;
-	flex-direction: column;
-`;
-
-const FormLabel = styled.label`
-	font-weight: bold;
-	margin: 1em 0 0.6em 0;
+const SlowSyncWarning = styled.div`
+	margin-top: 1em;
+	opacity: 0.8;
+	font-family: ${props => props.theme.fontFamily};
+	color: ${props => props.theme.color};
+	font-size: 14px;
 `;
 
 const syncTargetNames: string[] = [
@@ -143,23 +135,21 @@ const logosImageNames: Record<string, string> = {
 	'onedrive': 'SyncTarget_OneDrive.svg',
 };
 
-export default function(props: Props) {
-	const [showJoplinCloudForm, setShowJoplinCloudForm] = useState(false);
-	const joplinCloudDescriptionRef = useRef(null);
-	const [joplinCloudEmail, setJoplinCloudEmail] = useState('');
-	const [joplinCloudPassword, setJoplinCloudPassword] = useState('');
-	const [joplinCloudLoginInProgress, setJoplinCloudLoginInProgress] = useState(false);
+type SyncTargetInfoName = 'dropbox' | 'onedrive' | 'joplinCloud';
 
-	function closeDialog(dispatch: Function) {
-		dispatch({
+export default function(props: Props) {
+	const joplinCloudDescriptionRef = useRef(null);
+
+	const closeDialog = useCallback(() => {
+		props.dispatch({
 			type: 'DIALOG_CLOSE',
 			name: 'syncWizard',
 		});
-	}
+	}, [props.dispatch]);
 
 	const onButtonRowClick = useCallback(() => {
-		closeDialog(props.dispatch);
-	}, [props.dispatch]);
+		closeDialog();
+	}, [closeDialog]);
 
 	const { height: descriptionHeight } = useElementSize(joplinCloudDescriptionRef);
 
@@ -182,91 +172,33 @@ export default function(props: Props) {
 		);
 	}
 
-	const onJoplinCloudEmailChange = useCallback((event: any) => {
-		setJoplinCloudEmail(event.target.value);
-	}, []);
+	const onSelectButtonClick = useCallback(async (name: SyncTargetInfoName) => {
+		const routes = {
+			'dropbox': { name: 'DropboxLogin', target: 7 },
+			'onedrive': { name: 'OneDriveLogin', target: 3 },
+			'joplinCloud': { name: 'JoplinCloudLogin', target: 10 },
+		};
+		const route = routes[name];
+		if (!route) return; // throw error??
 
-	const onJoplinCloudPasswordChange = useCallback((event: any) => {
-		setJoplinCloudPassword(event.target.value);
-	}, []);
-
-	const onJoplinCloudLoginClick = useCallback(async () => {
-		setJoplinCloudLoginInProgress(true);
-
-		try {
-			const result = await SyncTargetJoplinCloud.checkConfig({
-				password: () => joplinCloudPassword,
-				path: () => Setting.value('sync.10.path'),
-				userContentPath: () => Setting.value('sync.10.userContentPath'),
-				username: () => joplinCloudEmail,
-			});
-
-			if (result.ok) {
-				Setting.setValue('sync.target', 10);
-				Setting.setValue('sync.10.username', joplinCloudEmail);
-				Setting.setValue('sync.10.password', joplinCloudPassword);
-				await Setting.saveAll();
-
-				alert(_('Thank you! Your Joplin Cloud account is now setup and ready to use.'));
-
-				closeDialog(props.dispatch);
-
-				props.dispatch({
-					type: 'NAV_GO',
-					routeName: 'Main',
-				});
-			} else {
-				alert(_('There was an error setting up your Joplin Cloud account. Please verify your email and password and try again. Error was:\n\n%s', result.errorMessage));
-			}
-		} finally {
-			setJoplinCloudLoginInProgress(false);
-		}
-	}, [joplinCloudEmail, joplinCloudPassword, props.dispatch]);
-
-	const onJoplinCloudCreateAccountClick = useCallback(() => {
-		bridge().openExternal('https://joplinapp.org/plans/');
-	}, []);
-
-	function renderJoplinCloudLoginForm() {
-		return (
-			<JoplinCloudLoginForm>
-				<div>{_('Login below.')} <CreateAccountLink href="#" onClick={onJoplinCloudCreateAccountClick}>{_('Or create an account.')}</CreateAccountLink></div>
-				<FormLabel>Email</FormLabel>
-				<StyledInput type="email" onChange={onJoplinCloudEmailChange}/>
-				<FormLabel>Password</FormLabel>
-				<StyledInput type="password" onChange={onJoplinCloudPasswordChange}/>
-				<SelectButton mt="1.3em" disabled={joplinCloudLoginInProgress} level={ButtonLevel.Primary} title={_('Login')} onClick={onJoplinCloudLoginClick}/>
-			</JoplinCloudLoginForm>
-		);
-	}
-
-	const onSelectButtonClick = useCallback(async (name: string) => {
-		if (name === 'joplinCloud') {
-			setShowJoplinCloudForm(true);
-		} else {
-			Setting.setValue('sync.target', name === 'dropbox' ? 7 : 3);
-			await Setting.saveAll();
-			closeDialog(props.dispatch);
-			props.dispatch({
-				type: 'NAV_GO',
-				routeName: name === 'dropbox' ? 'DropboxLogin' : 'OneDriveLogin',
-			});
-		}
-	}, [props.dispatch]);
+		Setting.setValue('sync.target', route.target);
+		await Setting.saveAll();
+		closeDialog();
+		props.dispatch({
+			type: 'NAV_GO',
+			routeName: route.name,
+		});
+	}, [props.dispatch, closeDialog]);
 
 	function renderSelectArea(info: SyncTargetInfo) {
-		if (info.name === 'joplinCloud' && showJoplinCloudForm) {
-			return renderJoplinCloudLoginForm();
-		} else {
-			return (
-				<SelectButton
-					level={ButtonLevel.Primary}
-					title={_('Select')}
-					onClick={() => onSelectButtonClick(info.name)}
-					disabled={joplinCloudLoginInProgress}
-				/>
-			);
-		}
+		return (
+			<SelectButton
+				level={ButtonLevel.Primary}
+				title={_('Select')}
+				onClick={() => onSelectButtonClick(info.name as SyncTargetInfoName)}
+				disabled={false}
+			/>
+		);
 	}
 
 	function renderSyncTarget(info: SyncTargetInfo) {
@@ -277,20 +209,26 @@ export default function(props: Props) {
 		const logoImageSrc = logoImageName ? `${bridge().buildDir()}/images/${logoImageName}` : '';
 		const logo = logoImageSrc ? <SyncTargetLogo src={logoImageSrc}/> : null;
 		const descriptionComp = <SyncTargetDescription height={height} ref={info.name === 'joplinCloud' ? joplinCloudDescriptionRef : null}>{info.description}</SyncTargetDescription>;
-		const featuresComp = showJoplinCloudForm && info.name === 'joplinCloud' ? null : renderFeatures(info.name);
+		const featuresComp = renderFeatures(info.name);
+
+		const renderSlowSyncWarning = () => {
+			if (info.name === 'joplinCloud') return null;
+			return <SlowSyncWarning>{`⚠️ ${_('%s is not optimised for synchronising many small files so your initial synchronisation will be slow.', info.label)}`}</SlowSyncWarning>;
+		};
 
 		return (
-			<SyncTargetBox id={key} key={key} faded={showJoplinCloudForm && info.name !== 'joplinCloud'}>
+			<SyncTargetBox id={key} key={key}>
 				<SyncTargetTitle>{logo}{info.label}</SyncTargetTitle>
 				{descriptionComp}
 				{featuresComp}
 				{renderSelectArea(info)}
+				{renderSlowSyncWarning()}
 			</SyncTargetBox>
 		);
 	}
 
 	const onSelfHostingClick = useCallback(() => {
-		closeDialog(props.dispatch);
+		closeDialog();
 
 		props.dispatch({
 			type: 'NAV_GO',
@@ -299,9 +237,10 @@ export default function(props: Props) {
 				defaultSection: 'sync',
 			},
 		});
-	}, [props.dispatch]);
+	}, [props.dispatch, closeDialog]);
 
 	function renderContent() {
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 		const boxes: any[] = [];
 
 		for (const name of syncTargetNames) {
@@ -310,7 +249,7 @@ export default function(props: Props) {
 			boxes.push(renderSyncTarget(info));
 		}
 
-		const selfHostingMessage = showJoplinCloudForm ? null : <SelfHostingMessage>Self-hosting? Joplin also supports various self-hosting options such as Nextcloud, WebDAV, AWS S3 and Joplin Server. <a href="#" onClick={onSelfHostingClick}>Click here to select one</a>.</SelfHostingMessage>;
+		const selfHostingMessage = <SelfHostingMessage>Self-hosting? Joplin also supports various self-hosting options such as Nextcloud, WebDAV, AWS S3 and Joplin Server. <a href="#" onClick={onSelfHostingClick}>Click here to select one</a>.</SelfHostingMessage>;
 
 		return (
 			<ContentRoot>
@@ -338,6 +277,6 @@ export default function(props: Props) {
 	}
 
 	return (
-		<Dialog renderContent={renderDialogWrapper}/>
+		<Dialog onCancel={closeDialog}>{renderDialogWrapper()}</Dialog>
 	);
 }

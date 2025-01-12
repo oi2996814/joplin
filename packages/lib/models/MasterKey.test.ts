@@ -1,12 +1,11 @@
 import { encryptionService, msleep, setupDatabaseAndSynchronizer, switchClient } from '../testing/test-utils';
 import MasterKey from './MasterKey';
 
-describe('models/MasterKey', function() {
+describe('models/MasterKey', () => {
 
-	beforeEach(async (done) => {
+	beforeEach(async () => {
 		await setupDatabaseAndSynchronizer(1);
 		await switchClient(1);
-		done();
 	});
 
 	it('should return the latest master key', (async () => {

@@ -4,12 +4,12 @@ const { View } = require('react-native');
 const { Button } = require('react-native');
 const { WebView } = require('react-native-webview');
 const { connect } = require('react-redux');
-const { ScreenHeader } = require('../screen-header.js');
-const { reg } = require('@joplin/lib/registry.js');
+const { ScreenHeader } = require('../ScreenHeader');
+const { reg } = require('@joplin/lib/registry');
 const { _ } = require('@joplin/lib/locale');
-const { BaseScreenComponent } = require('../base-screen.js');
+const { BaseScreenComponent } = require('../base-screen');
 const parseUri = require('@joplin/lib/parseUri');
-const { themeStyle } = require('../global-style.js');
+const { themeStyle } = require('../global-style');
 const shim = require('@joplin/lib/shim').default;
 
 class OneDriveLoginScreenComponent extends BaseScreenComponent {

@@ -1,8 +1,9 @@
 import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectsCommand, ObjectIdentifier, HeadObjectCommand } from '@aws-sdk/client-s3';
-import { CustomError, ErrorCode } from '../../../utils/errors';
+import { CustomError, CustomErrorCode } from '../../../utils/errors';
 import { StorageDriverConfig, StorageDriverType } from '../../../utils/types';
 import StorageDriverBase from './StorageDriverBase';
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 function stream2buffer(stream: any): Promise<Buffer> {
 	return new Promise((resolve, reject) => {
 		const buffer: Uint8Array[] = [];
@@ -18,6 +19,7 @@ function stream2buffer(stream: any): Promise<Buffer> {
 			resolve(Buffer.concat(buffer));
 		});
 
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 		stream.on('error', (error: any) => {
 			if (hasError) return;
 			hasError = true;
@@ -60,7 +62,7 @@ export default class StorageDriverS3 extends StorageDriverBase {
 
 			return stream2buffer(response.Body);
 		} catch (error) {
-			if (error?.$metadata?.httpStatusCode === 404) throw new CustomError(`No such item: ${itemId}`, ErrorCode.NotFound);
+			if (error?.$metadata?.httpStatusCode === 404) throw new CustomError(`No such item: ${itemId}`, CustomErrorCode.NotFound);
 			error.message = `Could not get item "${itemId}": ${error.message}`;
 			throw error;
 		}

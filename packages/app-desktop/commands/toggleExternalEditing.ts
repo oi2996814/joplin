@@ -22,7 +22,8 @@ export const runtime = (): CommandRuntime => {
 				void CommandService.instance().execute('startExternalEditing', noteId);
 			}
 		},
-		enabledCondition: 'oneNoteSelected',
+		enabledCondition: 'oneNoteSelected && !noteIsReadOnly && (!modalDialogVisible || gotoAnythingVisible)',
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 		mapStateToTitle: (state: any) => {
 			const noteId = stateUtils.selectedNoteId(state);
 			return state.watchedNoteFiles.includes(noteId) ? _('Stop') : '';

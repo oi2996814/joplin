@@ -4,13 +4,18 @@ import { isView, View } from '../services/MustacheService';
 import config from '../config';
 import { userIp } from '../utils/requestUtils';
 import { createCsrfTag } from '../utils/csrf';
-import { getImpersonatorAdminSessionId } from '../routes/index/utils/users/impersonate';
+import { getImpersonatorAdminSessionId } from '../routes/admin/utils/users/impersonate';
+import { onRequestComplete, onRequestStart } from '../utils/metrics';
+import { uuidgen } from '@joplin/lib/uuid';
 
 export default async function(ctx: AppContext) {
 	const requestStartTime = Date.now();
+	const requestId = uuidgen();
+
+	onRequestStart(requestId);
 
 	try {
-		const responseObject = await execRequest(ctx.joplin.routes, ctx);
+		const { response: responseObject, path } = await execRequest(ctx.joplin.routes, ctx);
 
 		if (responseObject instanceof Response) {
 			ctx.response = responseObject.response;
@@ -20,6 +25,7 @@ export default async function(ctx: AppContext) {
 			const view = responseObject as View;
 			ctx.response.status = view?.content?.error ? view?.content?.error?.httpCode || 500 : 200;
 			ctx.response.body = await ctx.joplin.services.mustache.renderView(view, {
+				currentPath: path,
 				notifications: ctx.joplin.notifications || [],
 				hasNotifications: !!ctx.joplin.notifications && !!ctx.joplin.notifications.length,
 				owner: ctx.joplin.owner,
@@ -75,6 +81,7 @@ export default async function(ctx: AppContext) {
 			ctx.response.body = await ctx.joplin.services.mustache.renderView(view);
 		} else { // JSON
 			ctx.response.set('Content-Type', 'application/json');
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 			const r: any = { error: error.message };
 			if (ctx.joplin.env === Env.Dev && error.stack) r.stack = error.stack;
 			if (error.code) r.code = error.code;
@@ -86,4 +93,6 @@ export default async function(ctx: AppContext) {
 		const requestDuration = Date.now() - requestStartTime;
 		ctx.joplin.appLogger().info(`${ctx.request.method} ${ctx.path} (${ctx.response.status}) (${requestDuration}ms)`);
 	}
+
+	onRequestComplete(requestId);
 }
