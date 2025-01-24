@@ -12,15 +12,35 @@
 				</a>
 			</div>
 			<div class="col-9 text-right d-none d-md-block">
-				<a href="{{baseUrl}}/news/" class="fw500">What's New</a>
+				{{> twitterLink}}
+				<a href="{{baseUrl}}/news/" class="fw500">News</a>
 				<a href="{{baseUrl}}/help/" class="fw500">Help</a>
 				<a href="{{forumUrl}}" class="fw500">Forum</a>
+				<!-- <a href="{{baseUrl}}/cn/" class="fw500">中文</a> -->
+
+				<!--
+				<div class="dropdown language-switcher">
+					<button class="fw500" type="button" id="dropdownMenuButton1" data-bs-toggle="dropdown" aria-expanded="false">
+						Language
+					</button>
+					<ul class="dropdown-menu" aria-labelledby="dropdownMenuButton1">
+						<li><a class="dropdown-item" href="#">Action</a></li>
+						<li><a class="dropdown-item" href="#">Another action</a></li>
+						<li><a class="dropdown-item" href="#">Something else here</a></li>
+					</ul>
+				</div>
+				-->
+
+
 				{{#showJoplinCloudLinks}}
 					{{> joplinCloudButton}}
 				{{/showJoplinCloudLinks}}
 				{{> supportButton}}
 			</div>
 			<div class="col-9 text-right d-block d-md-none navbar-mobile-content">
+				{{> twitterLink}}
+				<!-- <a href="{{baseUrl}}/cn/" class="fw500 chinese-page-link">中文</a> -->
+				{{> joplinCloudButton}}
 				{{> supportButton}}
 
 				<span class="pointer"
@@ -43,7 +63,7 @@
 						</div>
 
 						<div class="text-center menu-mobile-top">
-							<a href="{{baseUrl}}/news/" class="fw500 mobile-menu-link">What's New</a>
+							<a href="{{baseUrl}}/news/" class="fw500 mobile-menu-link">News</a>
 							<a href="{{baseUrl}}/help/" class="fw500 mobile-menu-link">Help</a>
 							<a href="{{forumUrl}}" class="fw500 mobile-menu-link">Forum</a>
 						</div>
@@ -59,6 +79,8 @@
 					{{#showToc}}
 						<div id="toc-mobile">{{{tocHtml}}}</div>
 					{{/showToc}}
+
+					{{> socialFeeds}}
 					
 					<div>
 						<p class="light-blue mobile-menu-link-bottom text-center">

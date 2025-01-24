@@ -1,5 +1,6 @@
 const fs = require('fs-extra');
 const execa = require('execa');
+const glob = require('glob');
 
 const utils = {};
 
@@ -19,6 +20,7 @@ utils.execCommandVerbose = function(commandName, args = []) {
 	console.info(`> ${commandName}`, args && args.length ? args : '');
 	const promise = execa(commandName, args);
 	promise.stdout.pipe(process.stdout);
+	promise.stderr.pipe(process.stderr);
 	return promise;
 };
 
@@ -37,7 +39,7 @@ utils.execCommand = function(command) {
 					return;
 				}
 
-				if (error.signal == 'SIGTERM') {
+				if (error.signal === 'SIGTERM') {
 					resolve('Process was killed');
 				} else {
 					const newError = new Error(`Code: ${error.code}: ${error.message}: ${stdout.trim()}`);
@@ -94,10 +96,8 @@ utils.replaceFileText = async function(filePath, regex, toInsert) {
 };
 
 utils.copyDir = async function(src, dest, options) {
-	options = Object.assign({}, {
-		excluded: [],
-		delete: true,
-	}, options);
+	options = { excluded: [],
+		delete: true, ...options };
 
 	src = utils.toSystemSlashes(src);
 	dest = utils.toSystemSlashes(dest);
@@ -133,12 +133,31 @@ utils.copyDir = async function(src, dest, options) {
 	}
 };
 
+// Occasionally, fs.mkdirp throws a "EEXIST" error if the directory already
+// exists, while it should actually ignore the error. So we have this wrapper
+// that actually handle the error. It means in general this method should be
+// preferred to avoid random failures on CI or when building the app.
+//
+// https://github.com/laurent22/joplin/issues/6935#issuecomment-1274404470
 utils.mkdir = async function(dir) {
 	if (utils.isWindows()) {
 		return utils.execCommand(`if not exist "${utils.toSystemSlashes(dir)}" mkdir "${utils.toSystemSlashes(dir)}"`);
 	} else {
-		return fs.mkdirp(dir);
+		try {
+			// Can't return right away, or the exception won't be caught
+			const result = await fs.mkdirp(dir);
+			return result;
+		} catch (error) {
+			// Shouldn't happen but sometimes does. So we ignore the error in
+			// this case.
+			if (error.code === 'EEXIST') return;
+			throw error;
+		}
 	}
+};
+
+utils.mkdirp = async function(dir) {
+	return utils.mkdir(dir);
 };
 
 utils.copyFile = async function(src, dest) {
@@ -189,6 +208,21 @@ utils.getFilename = (path) => {
 	const splitted = lastPart.split('.');
 	splitted.pop();
 	return splitted.join('.');
+};
+
+utils.msleep = (ms) => {
+	return new Promise((resolve) => {
+		setTimeout(() => {
+			resolve();
+		}, ms);
+	});
+};
+
+utils.globSync = (pattern, options = {}) => {
+	let output = glob.sync(pattern, options);
+	output = output.map(f => f.replace(/\\/g, '/'));
+	output.sort();
+	return output;
 };
 
 module.exports = utils;

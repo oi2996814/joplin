@@ -1,7 +1,10 @@
+import Logger from '@joplin/utils/Logger';
 import { isUniqueConstraintError } from '../db';
 import { User, UserFlag, UserFlagType, userFlagTypeToLabel, Uuid } from '../services/database/types';
 import { formatDateTime } from '../utils/time';
 import BaseModel from './BaseModel';
+
+const logger = Logger.create('UserFlagModel');
 
 interface AddRemoveOptions {
 	updateUser?: boolean;
@@ -108,6 +111,7 @@ export default class UserFlagModels extends BaseModel<UserFlag> {
 		const failedPaymentFinalFlag = flags.find(f => f.type === UserFlagType.FailedPaymentFinal);
 		const subscriptionCancelledFlag = flags.find(f => f.type === UserFlagType.SubscriptionCancelled);
 		const manuallyDisabledFlag = flags.find(f => f.type === UserFlagType.ManuallyDisabled);
+		const userDeletionInProgress = flags.find(f => f.type === UserFlagType.UserDeletionInProgress);
 
 		if (accountWithoutSubscriptionFlag) {
 			newProps.can_upload = 0;
@@ -133,11 +137,39 @@ export default class UserFlagModels extends BaseModel<UserFlag> {
 			newProps.enabled = 0;
 		}
 
+		if (userDeletionInProgress) {
+			newProps.enabled = 0;
+		}
+
+		let removeFromDeletionQueue = false;
+
+		if (!user.enabled && newProps.enabled) {
+			if (await this.models().userDeletion().isDeletedOrBeingDeleted(userId)) {
+				// User account is being deleted or already deleted and cannot
+				// be enabled again.
+				logger.error('Trying to enable an account that is queued for deletion - leaving account disabled');
+				newProps.enabled = 0;
+			} else {
+				// If the user has been re-enabled, we want to remove it from
+				// the deletion queue (if it has been queued there) immediately,
+				// so that it doesn't incorrectly get deleted.
+				removeFromDeletionQueue = true;
+			}
+		}
+
+		if (user.enabled !== newProps.enabled) {
+			newProps.disabled_time = !newProps.enabled ? Date.now() : 0;
+		}
+
 		if (user.can_upload !== newProps.can_upload || user.enabled !== newProps.enabled) {
-			await this.models().user().save({
-				id: userId,
-				...newProps,
-			});
+			await this.withTransaction(async () => {
+				if (removeFromDeletionQueue) await this.models().userDeletion().removeFromQueueByUserId(userId);
+
+				await this.models().user().save({
+					id: userId,
+					...newProps,
+				});
+			}, 'UserFlagModel::updateUserFromFlags');
 		}
 	}
 
@@ -150,6 +182,10 @@ export default class UserFlagModels extends BaseModel<UserFlag> {
 
 	public async allByUserId(userId: Uuid): Promise<UserFlag[]> {
 		return this.db(this.tableName).where('user_id', '=', userId);
+	}
+
+	public async deleteByUserId(userId: Uuid) {
+		await this.db(this.tableName).where('user_id', '=', userId).delete();
 	}
 
 }

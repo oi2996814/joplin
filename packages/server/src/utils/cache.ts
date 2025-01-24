@@ -1,4 +1,5 @@
 interface CacheEntry {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	object: any;
 	timestamp: number;
 }
@@ -9,8 +10,9 @@ interface CacheEntries {
 
 class Cache {
 
-	cache: CacheEntries = {};
+	private cache: CacheEntries = {};
 
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	private async setAny(key: string, o: any): Promise<void> {
 		this.cache[key] = {
 			object: JSON.stringify(o),
@@ -18,11 +20,13 @@ class Cache {
 		};
 	}
 
-	async setObject(key: string, object: Object): Promise<void> {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+	public async setObject(key: string, object: any): Promise<void> {
 		if (!object) return;
 		return this.setAny(key, object);
 	}
 
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	private async getAny(key: string): Promise<any> {
 		if (!this.cache[key]) return null;
 		try {
@@ -33,16 +37,16 @@ class Cache {
 		}
 	}
 
-	async object(key: string): Promise<object> {
+	public async object(key: string): Promise<object> {
 		return this.getAny(key) as object;
 	}
 
-	async delete(key: string | string[]): Promise<void> {
+	public async delete(key: string | string[]): Promise<void> {
 		const keys = typeof key === 'string' ? [key] : key;
 		for (const k of keys) delete this.cache[k];
 	}
 
-	async clearAll(): Promise<void> {
+	public async clearAll(): Promise<void> {
 		this.cache = {};
 	}
 

@@ -1,4 +1,4 @@
-import Logger from './Logger';
+import Logger, { LoggerWrapper } from '@joplin/utils/Logger';
 import shim from './shim';
 import BaseItem from './models/BaseItem';
 import time from './time';
@@ -6,7 +6,7 @@ import time from './time';
 const { isHidden } = require('./path-utils');
 import JoplinError from './JoplinError';
 import { Lock, LockClientType, LockType } from './services/synchronizer/LockHandler';
-const ArrayUtils = require('./ArrayUtils');
+import * as ArrayUtils from './ArrayUtils';
 const { sprintf } = require('sprintf-js');
 const Mutex = require('async-mutex').Mutex;
 
@@ -33,23 +33,36 @@ export interface RemoteItem {
 	// value will always be ahead. However for synchronising we need to know the
 	// exact Joplin item updated_time value.
 	jop_updated_time?: number;
+
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+	jopItem?: any;
 }
 
 export interface PaginatedList {
 	items: RemoteItem[];
 	hasMore: boolean;
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	context: any;
 }
 
+// Tells whether the delta call is going to include the items themselves or
+// just the metadata (which is the default). If the items are included it
+// means less http request and faster processing.
+export const getSupportsDeltaWithItems = (deltaResponse: PaginatedList) => {
+	if (!deltaResponse.items.length) return false;
+	return 'jopItem' in deltaResponse.items[0];
+};
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 function requestCanBeRepeated(error: any) {
 	const errorCode = typeof error === 'object' && error.code ? error.code : null;
 
-	// Unauthorized error - means username or password is incorrect or other
+	// Unauthorized/forbidden error - means username or password is incorrect or other
 	// permission issue, which won't be fixed by repeating the request.
-	if (errorCode === 403) return false;
+	if (errorCode === 403 || errorCode === 401) return false;
 
-	// The target is explicitely rejecting the item so repeating wouldn't make a difference.
-	if (errorCode === 'rejectedByTarget') return false;
+	// The target is explicitly rejecting the item so repeating wouldn't make a difference.
+	if (errorCode === 'rejectedByTarget' || errorCode === 'isReadOnly') return false;
 
 	// We don't repeat failSafe errors because it's an indication of an issue at the
 	// server-level issue which usually cannot be fixed by repeating the request.
@@ -60,6 +73,7 @@ function requestCanBeRepeated(error: any) {
 	return true;
 }
 
+// eslint-disable-next-line @typescript-eslint/ban-types -- Old code before rule was applied
 async function tryAndRepeat(fn: Function, count: number) {
 	let retryCount = 0;
 
@@ -86,9 +100,41 @@ async function tryAndRepeat(fn: Function, count: number) {
 	}
 }
 
+export interface DeltaOptions {
+	allItemIdsHandler(): Promise<string[]>;
+	logger?: LoggerWrapper;
+	wipeOutFailSafe: boolean;
+}
+
+export enum GetOptionsTarget {
+	String = 'string',
+	File = 'file',
+}
+
+export interface GetOptions {
+	target?: GetOptionsTarget;
+	path?: string;
+	encoding?: string;
+
+	source?: string;
+}
+
+export interface PutOptions {
+	path?: string;
+	source?: string;
+}
+
+export interface ItemStat {
+	path: string;
+	updated_time: number;
+	isDir: boolean;
+}
+
 class FileApi {
 
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	private baseDir_: any;
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	private driver_: any;
 	private logger_: Logger = new Logger();
 	private syncTargetId_: number = null;
@@ -99,13 +145,14 @@ class FileApi {
 	private remoteDateMutex_ = new Mutex();
 	private initialized_ = false;
 
-	constructor(baseDir: string | Function, driver: any) {
+	// eslint-disable-next-line @typescript-eslint/ban-types, @typescript-eslint/no-explicit-any -- Old code before rule was applied, Old code before rule was applied
+	public constructor(baseDir: string | Function, driver: any) {
 		this.baseDir_ = baseDir;
 		this.driver_ = driver;
 		this.driver_.fileApi_ = this;
 	}
 
-	async initialize() {
+	public async initialize() {
 		if (this.initialized_) return;
 		this.initialized_ = true;
 		if (this.driver_.initialize) return this.driver_.initialize(this.fullPath(''));
@@ -119,7 +166,7 @@ class FileApi {
 
 	// This can be true when the sync target timestamps (updated_time) provided
 	// in the delta call are guaranteed to be accurate. That requires
-	// explicitely setting the timestamp, which is not done anymore on any sync
+	// explicitly setting the timestamp, which is not done anymore on any sync
 	// target as it wasn't accurate (for example, the file system can't be
 	// relied on, and even OneDrive for some reason doesn't guarantee that the
 	// timestamp you set is what you get back).
@@ -135,7 +182,7 @@ class FileApi {
 		return !!this.driver().supportsLocks;
 	}
 
-	async fetchRemoteDateOffset_() {
+	private async fetchRemoteDateOffset_() {
 		const tempFile = `${this.tempDirName()}/timeCheck${Math.round(Math.random() * 1000000)}.txt`;
 		const startTime = Date.now();
 		await this.put(tempFile, 'timeCheck');
@@ -161,7 +208,7 @@ class FileApi {
 
 	// Approximates the current time on the sync target. It caches the time offset to
 	// improve performance.
-	async remoteDate() {
+	public async remoteDate() {
 		const shouldSyncTime = () => {
 			return !this.remoteDateNextCheckTime_ || Date.now() > this.remoteDateNextCheckTime_;
 		};
@@ -193,60 +240,60 @@ class FileApi {
 	// Ideally all requests repeating should be done at the FileApi level to remove duplicate code in the drivers, but
 	// historically some drivers (eg. OneDrive) are already handling request repeating, so this is optional, per driver,
 	// and it defaults to no repeating.
-	requestRepeatCount() {
+	public requestRepeatCount() {
 		if (this.requestRepeatCount_ !== null) return this.requestRepeatCount_;
 		if (this.driver_.requestRepeatCount) return this.driver_.requestRepeatCount();
 		return 0;
 	}
 
-	lastRequests() {
+	public lastRequests() {
 		return this.driver_.lastRequests ? this.driver_.lastRequests() : [];
 	}
 
-	clearLastRequests() {
+	public clearLastRequests() {
 		if (this.driver_.clearLastRequests) this.driver_.clearLastRequests();
 	}
 
-	baseDir() {
+	public baseDir() {
 		return typeof this.baseDir_ === 'function' ? this.baseDir_() : this.baseDir_;
 	}
 
-	tempDirName() {
+	public tempDirName() {
 		if (this.tempDirName_ === null) throw Error('Temp dir not set!');
 		return this.tempDirName_;
 	}
 
-	setTempDirName(v: string) {
+	public setTempDirName(v: string) {
 		this.tempDirName_ = v;
 	}
 
-	fsDriver() {
+	public fsDriver() {
 		return shim.fsDriver();
 	}
 
-	driver() {
+	public driver() {
 		return this.driver_;
 	}
 
-	setSyncTargetId(v: number) {
+	public setSyncTargetId(v: number) {
 		this.syncTargetId_ = v;
 	}
 
-	syncTargetId() {
+	public syncTargetId() {
 		if (this.syncTargetId_ === null) throw new Error('syncTargetId has not been set!!');
 		return this.syncTargetId_;
 	}
 
-	setLogger(l: Logger) {
+	public setLogger(l: Logger) {
 		if (!l) l = new Logger();
 		this.logger_ = l;
 	}
 
-	logger() {
+	public logger() {
 		return this.logger_;
 	}
 
-	fullPath(path: string) {
+	public fullPath(path: string) {
 		const output = [];
 		if (this.baseDir()) output.push(this.baseDir());
 		if (path) output.push(path);
@@ -254,7 +301,7 @@ class FileApi {
 	}
 
 	// DRIVER MUST RETURN PATHS RELATIVE TO `path`
-	// eslint-disable-next-line no-unused-vars, @typescript-eslint/no-unused-vars
+	// eslint-disable-next-line no-unused-vars, @typescript-eslint/no-unused-vars, @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	public async list(path = '', options: any = null): Promise<PaginatedList> {
 		if (!options) options = {};
 		if (!('includeHidden' in options)) options.includeHidden = false;
@@ -275,29 +322,31 @@ class FileApi {
 		}
 
 		if (!options.includeDirs) {
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 			result.items = result.items.filter((f: any) => !f.isDir);
 		}
 
 		if (options.syncItemsOnly) {
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 			result.items = result.items.filter((f: any) => !f.isDir && BaseItem.isSystemPath(f.path));
 		}
 
 		return result;
 	}
 
-	// Deprectated
-	setTimestamp(path: string, timestampMs: number) {
+	// Deprecated
+	public setTimestamp(path: string, timestampMs: number) {
 		logger.debug(`setTimestamp ${this.fullPath(path)}`);
 		return tryAndRepeat(() => this.driver_.setTimestamp(this.fullPath(path), timestampMs), this.requestRepeatCount());
 		// return this.driver_.setTimestamp(this.fullPath(path), timestampMs);
 	}
 
-	mkdir(path: string) {
+	public mkdir(path: string) {
 		logger.debug(`mkdir ${this.fullPath(path)}`);
 		return tryAndRepeat(() => this.driver_.mkdir(this.fullPath(path)), this.requestRepeatCount());
 	}
 
-	async stat(path: string) {
+	public async stat(path: string): Promise<ItemStat> {
 		logger.debug(`stat ${this.fullPath(path)}`);
 
 		const output = await tryAndRepeat(() => this.driver_.stat(this.fullPath(path)), this.requestRepeatCount());
@@ -308,14 +357,15 @@ class FileApi {
 	}
 
 	// Returns UTF-8 encoded string by default, or a Response if `options.target = 'file'`
-	get(path: string, options: any = null) {
+	public get(path: string, options: GetOptions = null) {
 		if (!options) options = {};
 		if (!options.encoding) options.encoding = 'utf8';
 		logger.debug(`get ${this.fullPath(path)}`);
 		return tryAndRepeat(() => this.driver_.get(this.fullPath(path), options), this.requestRepeatCount());
 	}
 
-	async put(path: string, content: any, options: any = null) {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+	public async put(path: string, content: any, options: PutOptions = null) {
 		logger.debug(`put ${this.fullPath(path)}`, options);
 
 		if (options && options.source === 'file') {
@@ -325,32 +375,33 @@ class FileApi {
 		return tryAndRepeat(() => this.driver_.put(this.fullPath(path), content, options), this.requestRepeatCount());
 	}
 
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	public async multiPut(items: MultiPutItem[], options: any = null) {
 		if (!this.driver().supportsMultiPut) throw new Error('Multi PUT not supported');
 		return tryAndRepeat(() => this.driver_.multiPut(items, options), this.requestRepeatCount());
 	}
 
-	delete(path: string) {
+	public delete(path: string) {
 		logger.debug(`delete ${this.fullPath(path)}`);
 		return tryAndRepeat(() => this.driver_.delete(this.fullPath(path)), this.requestRepeatCount());
 	}
 
-	// Deprectated
-	move(oldPath: string, newPath: string) {
+	// Deprecated
+	public move(oldPath: string, newPath: string) {
 		logger.debug(`move ${this.fullPath(oldPath)} => ${this.fullPath(newPath)}`);
 		return tryAndRepeat(() => this.driver_.move(this.fullPath(oldPath), this.fullPath(newPath)), this.requestRepeatCount());
 	}
 
-	// Deprectated
-	format() {
+	// Deprecated
+	public format() {
 		return tryAndRepeat(() => this.driver_.format(), this.requestRepeatCount());
 	}
 
-	clearRoot() {
+	public clearRoot() {
 		return tryAndRepeat(() => this.driver_.clearRoot(this.baseDir()), this.requestRepeatCount());
 	}
 
-	delta(path: string, options: any = null) {
+	public delta(path: string, options: DeltaOptions|null = null): Promise<PaginatedList> {
 		logger.debug(`delta ${this.fullPath(path)}`);
 		return tryAndRepeat(() => this.driver_.delta(this.fullPath(path), options), this.requestRepeatCount());
 	}
@@ -372,7 +423,9 @@ class FileApi {
 
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 function basicDeltaContextFromOptions_(options: any) {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	const output: any = {
 		timestamp: 0,
 		filesAtTimestamp: [],
@@ -397,7 +450,8 @@ function basicDeltaContextFromOptions_(options: any) {
 // This is the basic delta algorithm, which can be used in case the cloud service does not have
 // a built-in delta API. OneDrive and Dropbox have one for example, but Nextcloud and obviously
 // the file system do not.
-async function basicDelta(path: string, getDirStatFn: Function, options: any) {
+// eslint-disable-next-line @typescript-eslint/ban-types, @typescript-eslint/no-explicit-any -- Old code before rule was applied, Old code before rule was applied
+async function basicDelta(path: string, getDirStatFn: Function, options: DeltaOptions) {
 	const outputLimit = 50;
 	const itemIds = await options.allItemIdsHandler();
 	if (!Array.isArray(itemIds)) throw new Error('Delta API not supported - local IDs must be provided');
@@ -422,9 +476,11 @@ async function basicDelta(path: string, getDirStatFn: Function, options: any) {
 	// Stats are cached until all items have been processed (until hasMore is false)
 	if (newContext.statsCache === null) {
 		newContext.statsCache = await getDirStatFn(path);
-		newContext.statsCache.sort(function(a: any, b: any) {
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+		newContext.statsCache.sort((a: any, b: any) => {
 			return a.updated_time - b.updated_time;
 		});
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 		newContext.statIdsCache = newContext.statsCache.filter((item: any) => BaseItem.isSystemPath(item.path)).map((item: any) => BaseItem.pathToId(item.path));
 		newContext.statIdsCache.sort(); // Items must be sorted to use binary search below
 	}

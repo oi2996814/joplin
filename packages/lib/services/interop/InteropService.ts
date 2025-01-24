@@ -1,6 +1,4 @@
-import { ModuleType, FileSystemItem, ImportModuleOutputFormat, Module, ImportOptions, ExportOptions, ImportExportResult, defaultImportExportModule } from './types';
-import InteropService_Importer_Custom from './InteropService_Importer_Custom';
-import InteropService_Exporter_Custom from './InteropService_Exporter_Custom';
+import { ModuleType, FileSystemItem, ImportModuleOutputFormat, ImportOptions, ExportOptions, ImportExportResult, ExportProgressState, ExportModuleOutputFormat } from './types';
 import shim from '../../shim';
 import { _ } from '../../locale';
 import BaseItem from '../../models/BaseItem';
@@ -9,165 +7,241 @@ import Resource from '../../models/Resource';
 import Folder from '../../models/Folder';
 import NoteTag from '../../models/NoteTag';
 import Note from '../../models/Note';
-import { NoteEntity } from '../database/types';
-const ArrayUtils = require('../../ArrayUtils');
+import * as ArrayUtils from '../../ArrayUtils';
+import InteropService_Importer_Jex from './InteropService_Importer_Jex';
+import InteropService_Importer_Md from './InteropService_Importer_Md';
+import InteropService_Importer_Md_frontmatter from './InteropService_Importer_Md_frontmatter';
+import InteropService_Importer_Raw from './InteropService_Importer_Raw';
+import InteropService_Exporter_Jex from './InteropService_Exporter_Jex';
+import InteropService_Exporter_Raw from './InteropService_Exporter_Raw';
+import InteropService_Exporter_Md from './InteropService_Exporter_Md';
+import InteropService_Exporter_Md_frontmatter from './InteropService_Exporter_Md_frontmatter';
+import InteropService_Importer_Base from './InteropService_Importer_Base';
+import InteropService_Exporter_Base from './InteropService_Exporter_Base';
+import Module, { dynamicRequireModuleFactory, makeExportModule, makeImportModule } from './Module';
 const { sprintf } = require('sprintf-js');
 const { fileExtension } = require('../../path-utils');
-const { toTitleCase } = require('../../string-utils');
 const EventEmitter = require('events');
 
 export default class InteropService {
 
 	private defaultModules_: Module[];
 	private userModules_: Module[] = [];
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	private eventEmitter_: any = null;
 	private static instance_: InteropService;
+	private document_: Document;
+	private xmlSerializer_: XMLSerializer;
 
 	public static instance(): InteropService {
 		if (!this.instance_) this.instance_ = new InteropService();
 		return this.instance_;
 	}
 
-	constructor() {
+	public constructor() {
 		this.eventEmitter_ = new EventEmitter();
 	}
 
-	on(eventName: string, callback: Function) {
+	// eslint-disable-next-line @typescript-eslint/ban-types -- Old code before rule was applied
+	public on(eventName: string, callback: Function) {
 		return this.eventEmitter_.on(eventName, callback);
 	}
 
-	off(eventName: string, callback: Function) {
+	// eslint-disable-next-line @typescript-eslint/ban-types -- Old code before rule was applied
+	public off(eventName: string, callback: Function) {
 		return this.eventEmitter_.removeListener(eventName, callback);
 	}
 
-	modules() {
+	public modules() {
 		if (!this.defaultModules_) {
-			const importModules: Module[] = [
-				{
-					...defaultImportExportModule(ModuleType.Importer),
+			const importModules = [
+				makeImportModule({
 					format: 'jex',
 					fileExtensions: ['jex'],
 					sources: [FileSystemItem.File],
 					description: _('Joplin Export File'),
-				},
-				{
-					...defaultImportExportModule(ModuleType.Importer),
-					format: 'md',
-					fileExtensions: ['md', 'markdown', 'txt', 'html'],
-					sources: [FileSystemItem.File, FileSystemItem.Directory],
-					isNoteArchive: false, // Tells whether the file can contain multiple notes (eg. Enex or Jex format)
-					description: _('Markdown'),
-				},
-				{
-					...defaultImportExportModule(ModuleType.Importer),
-					format: 'md_frontmatter',
-					fileExtensions: ['md', 'markdown', 'txt', 'html'],
-					sources: [FileSystemItem.File, FileSystemItem.Directory],
-					isNoteArchive: false, // Tells whether the file can contain multiple notes (eg. Enex or Jex format)
-					description: _('Markdown + Front Matter'),
-				},
-				{
-					...defaultImportExportModule(ModuleType.Importer),
+				}, () => new InteropService_Importer_Jex()),
+
+				makeImportModule({
 					format: 'raw',
 					sources: [FileSystemItem.Directory],
 					description: _('Joplin Export Directory'),
-				},
-				{
-					...defaultImportExportModule(ModuleType.Importer),
-					format: 'enex',
-					fileExtensions: ['enex'],
-					sources: [FileSystemItem.File],
-					description: _('Evernote Export File (as Markdown)'),
-					importerClass: 'InteropService_Importer_EnexToMd',
-					isDefault: true,
-				},
-				{
-					...defaultImportExportModule(ModuleType.Importer),
+					separatorAfter: true,
+				}, () => new InteropService_Importer_Raw()),
+
+				makeImportModule({
 					format: 'enex',
 					fileExtensions: ['enex'],
 					sources: [FileSystemItem.File],
 					description: _('Evernote Export File (as HTML)'),
-					// TODO: Consider doing this the same way as the multiple `md` importers are handled
-					importerClass: 'InteropService_Importer_EnexToHtml',
+					supportsMobile: false,
 					outputFormat: ImportModuleOutputFormat.Html,
-				},
+				}, dynamicRequireModuleFactory('./InteropService_Importer_EnexToHtml')),
+
+				makeImportModule({
+					format: 'enex',
+					fileExtensions: ['enex'],
+					sources: [FileSystemItem.File],
+					description: _('Evernote Export File (as Markdown)'),
+					supportsMobile: false,
+					isDefault: true,
+				}, dynamicRequireModuleFactory('./InteropService_Importer_EnexToMd')),
+
+				makeImportModule({
+					format: 'enex',
+					fileExtensions: ['enex'],
+					sources: [FileSystemItem.Directory],
+					description: _('Evernote Export Files (Directory, as HTML)'),
+					supportsMobile: false,
+					outputFormat: ImportModuleOutputFormat.Html,
+				}, dynamicRequireModuleFactory('./InteropService_Importer_EnexToHtml')),
+
+				makeImportModule({
+					format: 'enex',
+					fileExtensions: ['enex'],
+					sources: [FileSystemItem.Directory],
+					description: _('Evernote Export Files (Directory, as Markdown)'),
+					supportsMobile: false,
+				}, dynamicRequireModuleFactory('./InteropService_Importer_EnexToMd')),
+
+				makeImportModule({
+					format: 'html',
+					fileExtensions: ['html'],
+					sources: [FileSystemItem.File, FileSystemItem.Directory],
+					isNoteArchive: false, // Tells whether the file can contain multiple notes (eg. Enex or Jex format)
+					description: _('HTML document'),
+				}, () => new InteropService_Importer_Md()),
+
+				makeImportModule({
+					format: 'md',
+					fileExtensions: ['md', 'markdown', 'txt', 'html'],
+					sources: [FileSystemItem.File, FileSystemItem.Directory],
+					isNoteArchive: false, // Tells whether the file can contain multiple notes (eg. Enex or Jex format)
+					description: _('Markdown'),
+				}, () => new InteropService_Importer_Md()),
+
+				makeImportModule({
+					format: 'md_frontmatter',
+					fileExtensions: ['md', 'markdown', 'txt', 'html'],
+					sources: [FileSystemItem.File, FileSystemItem.Directory],
+					isNoteArchive: false, // Tells whether the file can contain multiple notes (eg. Enex or Jex format)
+					description: _('Markdown + Front Matter'),
+				}, () => new InteropService_Importer_Md_frontmatter()),
+
+				makeImportModule({
+					format: 'txt',
+					fileExtensions: ['txt'],
+					sources: [FileSystemItem.File, FileSystemItem.Directory],
+					isNoteArchive: false, // Tells whether the file can contain multiple notes (eg. Enex or Jex format)
+					description: _('Text document'),
+				}, () => new InteropService_Importer_Md()),
+
+				makeImportModule({
+					format: 'zip',
+					fileExtensions: ['zip'],
+					sources: [FileSystemItem.File],
+					isNoteArchive: false, // Tells whether the file can contain multiple notes (eg. Enex or Jex format)
+					description: _('OneNote Notebook'),
+				}, dynamicRequireModuleFactory('./InteropService_Importer_OneNote')),
 			];
 
-			const exportModules: Module[] = [
-				{
-					...defaultImportExportModule(ModuleType.Exporter),
-					format: 'jex',
+			const exportModules = [
+				makeExportModule({
+					format: ExportModuleOutputFormat.Jex,
 					fileExtensions: ['jex'],
 					target: FileSystemItem.File,
 					description: _('Joplin Export File'),
-				},
-				{
-					...defaultImportExportModule(ModuleType.Exporter),
-					format: 'raw',
+				}, () => new InteropService_Exporter_Jex()),
+
+				makeExportModule({
+					format: ExportModuleOutputFormat.Raw,
 					target: FileSystemItem.Directory,
 					description: _('Joplin Export Directory'),
-				},
-				{
-					...defaultImportExportModule(ModuleType.Exporter),
-					format: 'md',
+				}, () => new InteropService_Exporter_Raw()),
+
+				makeExportModule({
+					format: ExportModuleOutputFormat.Markdown,
 					target: FileSystemItem.Directory,
 					description: _('Markdown'),
-				},
-				{
-					...defaultImportExportModule(ModuleType.Exporter),
-					format: 'md_frontmatter',
+				}, () => new InteropService_Exporter_Md()),
+
+				makeExportModule({
+					format: ExportModuleOutputFormat.MarkdownFrontMatter,
 					target: FileSystemItem.Directory,
 					description: _('Markdown + Front Matter'),
-				},
-				{
-					...defaultImportExportModule(ModuleType.Exporter),
-					format: 'html',
+				}, () => new InteropService_Exporter_Md_frontmatter()),
+
+				makeExportModule({
+					format: ExportModuleOutputFormat.Html,
 					fileExtensions: ['html', 'htm'],
 					target: FileSystemItem.File,
 					isNoteArchive: false,
 					description: _('HTML File'),
-				},
-				{
-					...defaultImportExportModule(ModuleType.Exporter),
-					format: 'html',
+					supportsMobile: false,
+				}, dynamicRequireModuleFactory('./InteropService_Exporter_Html')),
+
+				makeExportModule({
+					format: ExportModuleOutputFormat.Html,
 					target: FileSystemItem.Directory,
 					description: _('HTML Directory'),
-				},
+					supportsMobile: false,
+				}, dynamicRequireModuleFactory('./InteropService_Exporter_Html')),
 			];
 
-			this.defaultModules_ = importModules.concat(exportModules);
+			this.defaultModules_ = (importModules as Module[]).concat(exportModules);
 		}
 
 		return this.defaultModules_.concat(this.userModules_);
 	}
 
 	public registerModule(module: Module) {
-		module = {
-			...defaultImportExportModule(module.type),
-			...module,
-		};
-
 		this.userModules_.push(module);
-
 		this.eventEmitter_.emit('modulesChanged');
 	}
 
+	public set xmlSerializer(xmlSerializer: XMLSerializer) {
+		this.xmlSerializer_ = xmlSerializer;
+	}
+
+	public get xmlSerializer() {
+		return this.xmlSerializer_;
+	}
+
+	public set document(document: Document) {
+		this.document_ = document;
+	}
+
+	public get document() {
+		return this.document_;
+	}
+
 	// Find the module that matches the given type ("importer" or "exporter")
-	// and the given format. Some formats can have multiple assocated importers
+	// and the given format. Some formats can have multiple associated importers
 	// or exporters, such as ENEX. In this case, the one marked as "isDefault"
 	// is returned. This is useful to auto-detect the module based on the format.
 	// For more precise matching, newModuleFromPath_ should be used.
-	findModuleByFormat_(type: ModuleType, format: string, target: FileSystemItem = null, outputFormat: ImportModuleOutputFormat = null) {
+	private findModuleByFormat_(type: ModuleType, format: string, target: FileSystemItem = null, outputFormat: ImportModuleOutputFormat = null) {
 		const modules = this.modules();
 		const matches = [];
+
+		const isMobile = shim.mobilePlatform() !== '';
 		for (let i = 0; i < modules.length; i++) {
 			const m = modules[i];
+
+			if (!m.supportsMobile && isMobile) {
+				continue;
+			}
+
 			if (m.format === format && m.type === type) {
 				if (!target && !outputFormat) {
 					matches.push(m);
-				} else if (target && target === m.target) {
+				} else if (
+					m.type === ModuleType.Exporter && target && target === m.target
+				) {
 					matches.push(m);
-				} else if (outputFormat && outputFormat === m.outputFormat) {
+				} else if (
+					m.type === ModuleType.Importer && outputFormat && outputFormat === m.outputFormat
+				) {
 					matches.push(m);
 				}
 			}
@@ -179,100 +253,32 @@ export default class InteropService {
 		return matches.length ? matches[0] : null;
 	}
 
-	private modulePath(module: Module) {
-		let className = '';
-		if (module.type === ModuleType.Importer) {
-			className = module.importerClass || `InteropService_Importer_${toTitleCase(module.format)}`;
-		} else {
-			className = `InteropService_Exporter_${toTitleCase(module.format)}`;
-		}
-		return `./${className}`;
-	}
-
-	private newModuleFromCustomFactory(module: Module) {
-		if (module.type === ModuleType.Importer) {
-			return new InteropService_Importer_Custom(module);
-		} else {
-			return new InteropService_Exporter_Custom(module);
-		}
-	}
-
-	/**
-	 * NOTE TO FUTURE SELF: It might make sense to simply move all the existing
-	 * formatters to the `newModuleFromPath_` approach, so that there's only one way
-	 * to do this mapping. This isn't a priority right now (per the convo in:
-	 * https://github.com/laurent22/joplin/pull/1795#discussion_r322379121) but
-	 * we can do it if it ever becomes necessary.
-	 */
-	newModuleByFormat_(type: ModuleType, format: string, outputFormat: ImportModuleOutputFormat = ImportModuleOutputFormat.Markdown) {
+	// NOTE TO FUTURE SELF: It might make sense to simply move all the existing
+	// formatters to the `newModuleFromPath_` approach, so that there's only one way
+	// to do this mapping. This isn't a priority right now (per the convo in:
+	// https://github.com/laurent22/joplin/pull/1795#discussion_r322379121) but
+	// we can do it if it ever becomes necessary.
+	private newModuleByFormat_(type: ModuleType, format: string, outputFormat: ImportModuleOutputFormat = ImportModuleOutputFormat.Markdown) {
 		const moduleMetadata = this.findModuleByFormat_(type, format, null, outputFormat);
 		if (!moduleMetadata) throw new Error(_('Cannot load "%s" module for format "%s" and output "%s"', type, format, outputFormat));
 
-		let output = null;
-
-		if (moduleMetadata.isCustom) {
-			output = this.newModuleFromCustomFactory(moduleMetadata);
-		} else {
-			const ModuleClass = shim.requireDynamic(this.modulePath(moduleMetadata)).default;
-			output = new ModuleClass();
-		}
-
-		output.setMetadata(moduleMetadata);
-
-		return output;
+		return moduleMetadata.factory();
 	}
 
-	/**
-	 * The existing `newModuleByFormat_` fn would load by the input format. This
-	 * was fine when there was a 1-1 mapping of input formats to output formats,
-	 * but now that we have 2 possible outputs for an `enex` input, we need to be
-	 * explicit with which importer we want to use.
-	 *
-	 * https://github.com/laurent22/joplin/pull/1795#pullrequestreview-281574417
-	 */
-	newModuleFromPath_(type: ModuleType, options: any) {
+	// The existing `newModuleByFormat_` fn would load by the input format. This
+	// was fine when there was a 1-1 mapping of input formats to output formats,
+	// but now that we have 2 possible outputs for an `enex` input, we need to be
+	// explicit with which importer we want to use.
+	//
+	// https://github.com/laurent22/joplin/pull/1795#pullrequestreview-281574417
+	private newModuleFromPath_(type: ModuleType, options: ExportOptions&ImportOptions) {
 		const moduleMetadata = this.findModuleByFormat_(type, options.format, options.target);
 		if (!moduleMetadata) throw new Error(_('Cannot load "%s" module for format "%s" and target "%s"', type, options.format, options.target));
 
-		let output = null;
-
-		if (moduleMetadata.isCustom) {
-			output = this.newModuleFromCustomFactory(moduleMetadata);
-		} else {
-			const modulePath = this.modulePath(moduleMetadata);
-			const ModuleClass = shim.requireDynamic(modulePath).default;
-			output = new ModuleClass();
-		}
-
-		output.setMetadata({ options, ...moduleMetadata });
-
-		return output;
-
-		// let modulePath = options && options.modulePath ? options.modulePath : '';
-
-		// if (!modulePath) {
-		// 	const moduleMetadata = this.findModuleByFormat_(type, options.format, options.target);
-		// 	if (!moduleMetadata) throw new Error(_('Cannot load "%s" module for format "%s" and target "%s"', type, options.format, options.target));
-		// 	modulePath = this.modulePath(moduleMetadata);
-		// }
-
-		// const moduleMetadata = this.findModuleByFormat_(type, options.format, options.target);
-
-		// let output = null;
-
-		// if (moduleMetadata.isCustom) {
-		// 	output = this.newModuleFromCustomFactory(moduleMetadata);
-		// } else {
-		// 	const ModuleClass = shim.requireDynamic(modulePath).default;
-		// 	output = new ModuleClass();
-		// }
-
-		// output.setMetadata({ options, ...moduleMetadata });
-
-		// return output;
+		return moduleMetadata.factory(options);
 	}
 
-	moduleByFileExtension_(type: ModuleType, ext: string) {
+	private moduleByFileExtension_(type: ModuleType, ext: string) {
 		ext = ext.toLowerCase();
 
 		const modules = this.modules();
@@ -280,7 +286,7 @@ export default class InteropService {
 		for (let i = 0; i < modules.length; i++) {
 			const m = modules[i];
 			if (type !== m.type) continue;
-			if (m.fileExtensions && m.fileExtensions.indexOf(ext) >= 0) return m;
+			if (m.fileExtensions.includes(ext)) return m;
 		}
 
 		return null;
@@ -293,20 +299,20 @@ export default class InteropService {
 			format: 'auto',
 			destinationFolderId: null,
 			destinationFolder: null,
+			xmlSerializer: this.xmlSerializer,
+			document: this.document,
 			...options,
 		};
 
 		if (options.format === 'auto') {
 			const module = this.moduleByFileExtension_(ModuleType.Importer, fileExtension(options.path));
 			if (!module) throw new Error(_('Please specify import format for %s', options.path));
-			// eslint-disable-next-line require-atomic-updates
 			options.format = module.format;
 		}
 
 		if (options.destinationFolderId) {
 			const folder = await Folder.load(options.destinationFolderId);
 			if (!folder) throw new Error(_('Cannot find "%s".', options.destinationFolderId));
-			// eslint-disable-next-line require-atomic-updates
 			options.destinationFolder = folder;
 		}
 
@@ -314,18 +320,28 @@ export default class InteropService {
 
 		const importer = this.newModuleByFormat_(ModuleType.Importer, options.format, options.outputFormat);
 
+		if (!(importer instanceof InteropService_Importer_Base)) {
+			throw new Error('Resolved importer is not an importer');
+		}
+
 		await importer.init(options.path, options);
 		result = await importer.exec(result);
 
 		return result;
 	}
 
-	private normalizeItemForExport(itemType: ModelType, item: any): any {
-		if (itemType === ModelType.Note) {
-			const output: NoteEntity = { ...item };
-			output.is_shared = 0;
-			output.share_id = '';
-			return output;
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+	private normalizeItemForExport(_itemType: ModelType, item: any): any {
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+		const override: any = {};
+		if ('is_shared' in item) override.is_shared = 0;
+		if ('share_id' in item) override.share_id = '';
+
+		if (Object.keys(override).length) {
+			return {
+				...item,
+				...override,
+			};
 		} else {
 			return item;
 		}
@@ -333,7 +349,7 @@ export default class InteropService {
 
 	public async export(options: ExportOptions): Promise<ImportExportResult> {
 		options = {
-			format: 'jex',
+			format: ExportModuleOutputFormat.Jex,
 			...options,
 		};
 
@@ -341,9 +357,15 @@ export default class InteropService {
 		let sourceFolderIds = options.sourceFolderIds ? options.sourceFolderIds : [];
 		const sourceNoteIds = options.sourceNoteIds ? options.sourceNoteIds : [];
 		const result: ImportExportResult = { warnings: [] };
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 		const itemsToExport: any[] = [];
 
+		options.onProgress?.(ExportProgressState.QueuingItems, null);
+		let totalItemsToProcess = 0;
+
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 		const queueExportItem = (itemType: number, itemOrId: any) => {
+			totalItemsToProcess ++;
 			itemsToExport.push({
 				type: itemType,
 				itemOrId: itemOrId,
@@ -408,9 +430,14 @@ export default class InteropService {
 		}
 
 		const exporter = this.newModuleFromPath_(ModuleType.Exporter, options);
+		if (!(exporter instanceof InteropService_Exporter_Base)) {
+			throw new Error('Resolved exporter is not an exporter');
+		}
+
 		await exporter.init(exportPath, options);
 
 		const typeOrder = [BaseModel.TYPE_FOLDER, BaseModel.TYPE_RESOURCE, BaseModel.TYPE_NOTE, BaseModel.TYPE_TAG, BaseModel.TYPE_NOTE_TAG];
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 		const context: any = {
 			resourcePaths: {},
 		};
@@ -423,6 +450,7 @@ export default class InteropService {
 			await exporter.prepareForProcessingItemType(type, itemsToExport);
 		}
 
+		let itemsProcessed = 0;
 		for (let typeOrderIndex = 0; typeOrderIndex < typeOrder.length; typeOrderIndex++) {
 			const type = typeOrder[typeOrderIndex];
 
@@ -433,9 +461,9 @@ export default class InteropService {
 
 				const ItemClass = BaseItem.getClassByItemType(itemType);
 				const itemOrId = itemsToExport[i].itemOrId;
-				const item = this.normalizeItemForExport(itemType, typeof itemOrId === 'object' ? itemOrId : await ItemClass.load(itemOrId));
+				const rawItem = typeof itemOrId === 'object' ? itemOrId : await ItemClass.load(itemOrId);
 
-				if (!item) {
+				if (!rawItem) {
 					if (itemType === BaseModel.TYPE_RESOURCE) {
 						result.warnings.push(sprintf('A resource that does not exist is referenced in a note. The resource was skipped. Resource ID: %s', itemOrId));
 					} else {
@@ -444,13 +472,15 @@ export default class InteropService {
 					continue;
 				}
 
+				const item = this.normalizeItemForExport(itemType, rawItem);
+
 				if (item.encryption_applied || item.encryption_blob_encrypted) {
 					result.warnings.push(sprintf('This item is currently encrypted: %s "%s" (%s) and was not exported. You may wait for it to be decrypted and try again.', BaseModel.modelTypeToName(itemType), item.title ? item.title : item.id, item.id));
 					continue;
 				}
 
 				try {
-					if (itemType == BaseModel.TYPE_RESOURCE) {
+					if (itemType === BaseModel.TYPE_RESOURCE) {
 						const resourcePath = Resource.fullPath(item);
 						context.resourcePaths[item.id] = resourcePath;
 						exporter.updateContext(context);
@@ -462,9 +492,13 @@ export default class InteropService {
 					console.error(error);
 					result.warnings.push(error.message);
 				}
+
+				itemsProcessed++;
+				options.onProgress?.(ExportProgressState.Exporting, itemsProcessed / totalItemsToProcess);
 			}
 		}
 
+		options.onProgress?.(ExportProgressState.Closing, null);
 		await exporter.close();
 
 		return result;

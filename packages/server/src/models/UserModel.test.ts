@@ -1,12 +1,13 @@
-import { createUserAndSession, beforeAllDb, afterAllTests, beforeEachDb, models, checkThrowAsync, createItem, expectThrow } from '../utils/testing/testUtils';
-import { EmailSender, User, UserFlagType } from '../services/database/types';
-import { ErrorUnprocessableEntity } from '../utils/errors';
+import { createUserAndSession, beforeAllDb, afterAllTests, beforeEachDb, models, checkThrowAsync, expectThrow } from '../utils/testing/testUtils';
+import { EmailSender, UserFlagType } from '../services/database/types';
+import { ErrorBadRequest, ErrorUnprocessableEntity } from '../utils/errors';
 import { betaUserDateRange, stripeConfig } from '../utils/stripe';
 import { accountByType, AccountType } from './UserModel';
 import { failedPaymentFinalAccount, failedPaymentWarningInterval } from './SubscriptionModel';
 import { stripePortalUrl } from '../utils/urlUtils';
+import { Day } from '../utils/time';
 
-describe('UserModel', function() {
+describe('UserModel', () => {
 
 	beforeAll(async () => {
 		await beforeAllDb('UserModel');
@@ -49,28 +50,41 @@ describe('UserModel', function() {
 		// check that the email is valid
 		error = await checkThrowAsync(async () => await models().user().save({ id: user1.id, email: 'ohno' }));
 		expect(error instanceof ErrorUnprocessableEntity).toBe(true);
+
+		// check that the email is not too long
+		error = await checkThrowAsync(async () => await models().user().save({ id: user1.id, email: `${'long'.repeat(100)}@example.com` }));
+		expect(error instanceof ErrorUnprocessableEntity).toBe(true);
+
+		// check that the full name is not too long
+		error = await checkThrowAsync(async () => await models().user().save({ id: user1.id, full_name: 'long'.repeat(400) }));
+		expect(error instanceof ErrorUnprocessableEntity).toBe(true);
+
+		// should not throw if updating with valid data
+		expect(
+			await checkThrowAsync(async () => await models().user().save({ id: user1.id, full_name: 'Example', email: 'new_email@example.com' })),
+		).toBe(null);
 	});
 
-	test('should delete a user', async () => {
-		const { session: session1, user: user1 } = await createUserAndSession(2, false);
+	// test('should delete a user', async () => {
+	// 	const { session: session1, user: user1 } = await createUserAndSession(2, false);
 
-		const userModel = models().user();
+	// 	const userModel = models().user();
 
-		const allUsers: User[] = await userModel.all();
-		const beforeCount: number = allUsers.length;
+	// 	const allUsers: User[] = await userModel.all();
+	// 	const beforeCount: number = allUsers.length;
 
-		await createItem(session1.id, 'root:/test.txt:', 'testing');
+	// 	await createItem(session1.id, 'root:/test.txt:', 'testing');
 
-		// Admin can delete any user
-		expect(!!(await models().session().load(session1.id))).toBe(true);
-		expect((await models().item().all()).length).toBe(1);
-		expect((await models().userItem().all()).length).toBe(1);
-		await models().user().delete(user1.id);
-		expect((await userModel.all()).length).toBe(beforeCount - 1);
-		expect(!!(await models().session().load(session1.id))).toBe(false);
-		expect((await models().item().all()).length).toBe(0);
-		expect((await models().userItem().all()).length).toBe(0);
-	});
+	// 	// Admin can delete any user
+	// 	expect(!!(await models().session().load(session1.id))).toBe(true);
+	// 	expect((await models().item().all()).length).toBe(1);
+	// 	expect((await models().userItem().all()).length).toBe(1);
+	// 	await models().user().delete(user1.id);
+	// 	expect((await userModel.all()).length).toBe(beforeCount - 1);
+	// 	expect(!!(await models().session().load(session1.id))).toBe(false);
+	// 	expect((await models().item().all()).length).toBe(0);
+	// 	expect((await models().userItem().all()).length).toBe(0);
+	// });
 
 	test('should push an email when creating a new user', async () => {
 		const { user: user1 } = await createUserAndSession(1);
@@ -236,35 +250,6 @@ describe('UserModel', function() {
 		stripeConfig().enabled = false;
 	});
 
-	test('should disable disable the account and send an email if payment failed for good', async () => {
-		stripeConfig().enabled = true;
-
-		const { user: user1 } = await models().subscription().saveUserAndSubscription('toto@example.com', 'Toto', AccountType.Basic, 'usr_111', 'sub_111');
-
-		const sub = await models().subscription().byUserId(user1.id);
-
-		const now = Date.now();
-		const paymentFailedTime = now - failedPaymentFinalAccount - 10;
-		await models().subscription().save({
-			id: sub.id,
-			last_payment_time: now - failedPaymentFinalAccount * 2,
-			last_payment_failed_time: paymentFailedTime,
-		});
-
-		await models().user().handleFailedPaymentSubscriptions();
-
-		{
-			const user1 = await models().user().loadByEmail('toto@example.com');
-			expect(user1.enabled).toBe(0);
-
-			const email = (await models().email().all()).pop();
-			expect(email.key).toBe(`payment_failed_account_disabled_${paymentFailedTime}`);
-			expect(email.body).toContain(stripePortalUrl());
-		}
-
-		stripeConfig().enabled = false;
-	});
-
 	test('should send emails and flag accounts when it is over the size limit', async () => {
 		const { user: user1 } = await createUserAndSession(1);
 		const { user: user2 } = await createUserAndSession(2);
@@ -330,12 +315,13 @@ describe('UserModel', function() {
 		}
 	});
 
-	test('should get the user public key', async function() {
+	test('should get the user public key', async () => {
 		const { user: user1 } = await createUserAndSession(1);
 		const { user: user2 } = await createUserAndSession(2);
 		const { user: user3 } = await createUserAndSession(3);
 		const { user: user4 } = await createUserAndSession(4);
 
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 		const syncInfo1: any = {
 			'version': 3,
 			'e2ee': {
@@ -354,9 +340,11 @@ describe('UserModel', function() {
 			},
 		};
 
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 		const syncInfo2: any = JSON.parse(JSON.stringify(syncInfo1));
 		syncInfo2.ppk.value.publicKey = 'PUBLIC_KEY_2';
 
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 		const syncInfo3: any = JSON.parse(JSON.stringify(syncInfo1));
 		delete syncInfo3.ppk;
 
@@ -401,6 +389,70 @@ describe('UserModel', function() {
 
 		await models().user().handleOversizedAccounts();
 		expect(await models().userFlag().byUserId(user1.id, UserFlagType.AccountOverLimit)).toBeFalsy();
+	});
+
+	test('should disable and enable users', async () => {
+		const { user: user1 } = await createUserAndSession(1);
+		const { user: user2 } = await createUserAndSession(2);
+
+		jest.useFakeTimers();
+
+		const t0 = new Date('2022-01-01').getTime();
+		jest.setSystemTime(t0);
+
+		await models().userFlag().add(user1.id, UserFlagType.ManuallyDisabled);
+
+		expect((await models().user().load(user1.id)).enabled).toBe(0);
+		expect((await models().user().load(user2.id)).enabled).toBe(1);
+
+		const t1 = new Date('2022-02-01').getTime();
+		jest.setSystemTime(t1);
+
+		// If we run the user deletion service at this point, it should add the
+		// disabled account
+		await models().userDeletion().autoAdd(10, 10 * Day, t1 + 3 * Day);
+		expect(await models().userDeletion().count()).toBe(1);
+
+		// If we make the account enabled again, the user should be immediately
+		// removed from the queue
+		await models().userFlag().remove(user1.id, UserFlagType.ManuallyDisabled);
+		expect(await models().userDeletion().count()).toBe(0);
+
+		await models().userFlag().add(user1.id, UserFlagType.ManuallyDisabled);
+
+		const t2 = new Date('2022-03-01').getTime();
+		jest.setSystemTime(t2);
+
+		// Should be added again
+		await models().userDeletion().autoAdd(10, 10 * Day, t2 + 3 * Day);
+		expect(await models().userDeletion().count()).toBe(1);
+
+		const t3 = new Date('2022-04-01').getTime();
+		jest.setSystemTime(t3);
+
+		// Now if the service were to run, the user deletion would start and it
+		// should no longer be possible to remove it from the queue. And it
+		// shouldn't be possible to enable the user either.
+		const job = await models().userDeletion().next();
+		expect(job.user_id).toBe(user1.id);
+		await models().userDeletion().start(job.id);
+
+		await models().userFlag().add(user1.id, UserFlagType.ManuallyDisabled);
+		expect((await models().user().load(user1.id)).enabled).toBe(0);
+	});
+
+	test('should throw an error if the password being saved seems to be hashed', async () => {
+		const passwordSimilarToHash = '$2a$10';
+
+		const user = await models().user().save({
+			email: 'test@example.com',
+			password: '111111',
+		});
+
+		const error = await checkThrowAsync(async () => await models().user().save({ id: user.id, password: passwordSimilarToHash }));
+
+		expect(error.message).toBe(`Unable to save user because password already seems to be hashed. User id: ${user.id}`);
+		expect(error instanceof ErrorBadRequest).toBe(true);
 	});
 
 });

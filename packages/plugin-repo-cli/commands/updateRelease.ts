@@ -1,3 +1,5 @@
+/* eslint-disable no-console */
+
 import { githubOauthToken } from '@joplin/tools/tool-utils';
 import { pathExists, readdir, readFile, stat, writeFile } from 'fs-extra';
 
@@ -84,6 +86,7 @@ async function deleteAsset(oauthToken: string, id: number) {
 }
 
 async function uploadAsset(oauthToken: string, uploadUrl: string, pluginInfo: PluginInfo) {
+	// eslint-disable-next-line @typescript-eslint/ban-types -- Old code before rule was applied
 	return new Promise((resolve: Function, reject: Function) => {
 		ghReleaseAssets({
 			url: uploadUrl,
@@ -94,6 +97,7 @@ async function uploadAsset(oauthToken: string, uploadUrl: string, pluginInfo: Pl
 					path: pluginInfo.path,
 				},
 			],
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 		}, (error: Error, assets: any) => {
 			if (error) {
 				reject(error);
@@ -105,6 +109,7 @@ async function uploadAsset(oauthToken: string, uploadUrl: string, pluginInfo: Pl
 }
 
 async function createStats(statFilePath: string, release: Release) {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	const output: Record<string, any> = await pathExists(statFilePath) ? JSON.parse(await readFile(statFilePath, 'utf8')) : {};
 
 	if (release.assets) {
@@ -122,6 +127,7 @@ async function createStats(statFilePath: string, release: Release) {
 	return output;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 async function saveStats(statFilePath: string, stats: any) {
 	await writeFile(statFilePath, JSON.stringify(stats, null, '\t'));
 }

@@ -3,21 +3,29 @@
 // (Desktop|Mobile|Android|iOS[CLI): (New|Improved|Fixed): Some message..... (#ISSUE)
 
 import { execCommand, githubUsername } from './tool-utils';
+import { compareVersions } from 'compare-versions';
 
 interface LogEntry {
 	message: string;
 	commit: string;
 	author: Author;
+	files: string[];
 }
 
 enum Platform {
+	Unknown = 'unknown',
 	Android = 'android',
+	Windows = 'windows',
+	MacOs = 'macos',
+	Linux = 'linux',
 	Ios = 'ios',
 	Desktop = 'desktop',
 	Clipper = 'clipper',
 	Server = 'server',
+	Cloud = 'cloud',
 	Cli = 'cli',
 	PluginGenerator = 'plugin-generator',
+	PluginRepoCli = 'plugin-repo-cli',
 }
 
 enum PublishFormat {
@@ -56,6 +64,10 @@ async function gitLog(sinceTag: string) {
 		const authorEmail = splitted[1];
 		const authorName = splitted[2];
 		const message = splitted[3].trim();
+		let files: string[] = [];
+
+		const filesResult = await execCommand(`git diff-tree --no-commit-id --name-only ${commit} -r`);
+		files = filesResult.split('\n').map(s => s.trim()).filter(s => !!s);
 
 		output.push({
 			commit: commit,
@@ -65,6 +77,7 @@ async function gitLog(sinceTag: string) {
 				name: authorName,
 				login: await githubUsername(authorEmail, authorName),
 			},
+			files,
 		});
 	}
 
@@ -73,26 +86,146 @@ async function gitLog(sinceTag: string) {
 
 async function gitTags() {
 	const lines: string = await execCommand('git tag --sort=committerdate');
-	return lines.split('\n').map(l => l.trim()).filter(l => !!l);
+	const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+	return lines
+		.split('\n')
+		.map(l => l.trim())
+		.filter(l => !!l)
+		.sort((a, b) => collator.compare(a, b));
 }
 
 function platformFromTag(tagName: string): Platform {
 	if (tagName.indexOf('v') === 0) return Platform.Desktop;
 	if (tagName.indexOf('android') >= 0) return Platform.Android;
+	if (tagName.indexOf('windows') >= 0) return Platform.Windows;
+	if (tagName.indexOf('linux') >= 0) return Platform.Linux;
+	if (tagName.indexOf('macos') >= 0) return Platform.MacOs;
 	if (tagName.indexOf('ios') >= 0) return Platform.Ios;
 	if (tagName.indexOf('clipper') === 0) return Platform.Clipper;
 	if (tagName.indexOf('cli') === 0) return Platform.Cli;
 	if (tagName.indexOf('server') === 0) return Platform.Server;
+	if (tagName.indexOf('cloud') === 0) return Platform.Cloud;
 	if (tagName.indexOf('plugin-generator') === 0) return Platform.PluginGenerator;
-	throw new Error(`Could not determine platform from tag: "${tagName}"`);
+	if (tagName.indexOf('plugin-repo-cli') === 0) return Platform.PluginRepoCli;
+	return Platform.Unknown;
+	// throw new Error(`Could not determine platform from tag: "${tagName}"`);
 }
 
+export const filesApplyToPlatform = (files: string[], platform: string): boolean => {
+	const isMainApp = ['android', 'ios', 'windows', 'linux', 'macos', 'desktop', 'cli', 'server'].includes(platform);
+	const isMobile = ['android', 'ios'].includes(platform);
+
+	for (const file of files) {
+		if (file.startsWith('packages/app-cli') && platform === 'cli') return true;
+		if (file.startsWith('packages/app-clipper') && platform === 'clipper') return true;
+		if (file.startsWith('packages/app-mobile') && isMobile) return true;
+		if (file.startsWith('packages/app-desktop') && platform === 'desktop') return true;
+		if (file.startsWith('packages/fork-htmlparser2') && isMainApp) return true;
+		if (file.startsWith('packages/fork-uslug') && isMainApp) return true;
+		if (file.startsWith('packages/htmlpack') && isMainApp) return true;
+		if (file.startsWith('packages/lib') && isMainApp) return true;
+		if (file.startsWith('packages/pdf-viewer') && platform === 'desktop') return true;
+		if (file.startsWith('packages/react-native-') && isMobile) return true;
+		if (file.startsWith('packages/renderer') && isMainApp) return true;
+		if (file.startsWith('packages/server') && platform === 'server') return true;
+		if (file.startsWith('packages/tools') && isMainApp) return true;
+		if (file.startsWith('packages/turndown') && isMainApp) return true;
+	}
+
+	return false;
+};
+
+export interface RenovateMessage {
+	package: string;
+	version: string;
+}
+
+export const parseRenovateMessage = (message: string): RenovateMessage => {
+	const regexes = [
+		/^Update dependency ([^\s]+) to ([^\s]+)/,
+		/^Update ([^\s]+) monorepo to ([^\s]+)/,
+		/^Update ([^\s]+)/,
+	];
+
+	for (const regex of regexes) {
+		const m = message.match(regex);
+
+		if (m) {
+			return {
+				package: m[1],
+				version: m.length >= 3 ? m[2] : '',
+			};
+		}
+	}
+
+	throw new Error(`Not a Renovate message: ${message}`);
+};
+
+export const summarizeRenovateMessages = (messages: RenovateMessage[]): string => {
+	// Exclude some dev dependencies
+	messages = messages.filter(m => {
+		if ([
+			'@electron/notarize',
+			'eslint',
+			'gettext-extractor',
+			'gettext-parser',
+			'jest',
+			'lint-staged',
+			'madge',
+			'ts-jest',
+			'ts-loader',
+			'ts-node',
+			'typescript',
+			'yeoman-generator',
+			'nodemon',
+		].includes(m.package)) {
+			return false;
+		}
+
+		if (m.package.startsWith('@types/')) return false;
+		if (m.package.startsWith('typescript-')) return false;
+		if (m.package.startsWith('@testing-')) return false;
+
+		return true;
+	});
+
+	const temp: Record<string, string> = {};
+	for (const message of messages) {
+		if (!(message.package in temp)) {
+			temp[message.package] = message.version;
+		} else {
+			if (message.version > temp[message.package]) {
+				temp[message.package] = message.version;
+			}
+		}
+	}
+
+	const temp2: string[] = [];
+	for (const [pkg, version] of Object.entries(temp)) {
+		const versionString = version ? ` (${version})` : '';
+		temp2.push(`${pkg}${versionString}`);
+	}
+
+	temp2.sort();
+
+	if (temp2.length) return `Updated packages ${temp2.join(', ')}`;
+
+	return '';
+};
+
+const versionFromTag = (tag: string) => {
+	const s = tag.split('-');
+	return s[s.length - 1];
+};
+
 function filterLogs(logs: LogEntry[], platform: Platform) {
-	const output = [];
+	const output: LogEntry[] = [];
 	const revertedLogs = [];
 
 	// eslint-disable-next-line no-unused-vars, @typescript-eslint/no-unused-vars
 	// let updatedTranslations = false;
+
+	const renovateMessages: RenovateMessage[] = [];
 
 	for (const log of logs) {
 
@@ -106,29 +239,51 @@ function filterLogs(logs: LogEntry[], platform: Platform) {
 
 		if (revertedLogs.indexOf(log.message) >= 0) continue;
 
+		let isRenovate = false;
 		let prefix = log.message.trim().toLowerCase().split(':');
-		if (prefix.length <= 1) continue;
-		prefix = prefix[0].split(',').map(s => s.trim());
+		if (prefix.length <= 1) {
+			if (log.author && log.author.name === 'renovate[bot]') {
+				prefix = ['renovate'];
+				isRenovate = true;
+			} else {
+				continue;
+			}
+		} else {
+			prefix = prefix[0].split(',').map(s => s.trim());
+		}
 
 		let addIt = false;
 
 		// "All" refers to desktop, CLI and mobile app. Clipper and Server are not included.
-		if (prefix.indexOf('all') >= 0 && (platform !== 'clipper' && platform !== 'server')) addIt = true;
+		if (prefix.indexOf('all') >= 0 && (platform !== 'clipper' && platform !== 'server' && platform !== 'cloud')) addIt = true;
 		if ((platform === 'android' || platform === 'ios') && prefix.indexOf('mobile') >= 0) addIt = true;
 		if (platform === 'android' && prefix.indexOf('android') >= 0) addIt = true;
 		if (platform === 'ios' && prefix.indexOf('ios') >= 0) addIt = true;
 		if (platform === 'desktop' && prefix.indexOf('desktop') >= 0) addIt = true;
-		if (platform === 'desktop' && (prefix.indexOf('desktop') >= 0 || prefix.indexOf('api') >= 0 || prefix.indexOf('plugins') >= 0 || prefix.indexOf('macos') >= 0)) addIt = true;
+		if (platform === 'desktop' && (prefix.indexOf('desktop') >= 0 || prefix.indexOf('api') >= 0 || prefix.indexOf('plugins') >= 0 || prefix.indexOf('macos') >= 0 || prefix.indexOf('windows') >= 0 || prefix.indexOf('linux') >= 0)) addIt = true;
 		if (platform === 'cli' && prefix.indexOf('cli') >= 0) addIt = true;
 		if (platform === 'clipper' && prefix.indexOf('clipper') >= 0) addIt = true;
 		if (platform === 'server' && prefix.indexOf('server') >= 0) addIt = true;
+		if (platform === 'cloud' && (prefix.indexOf('cloud') >= 0 || prefix.indexOf('server') >= 0)) addIt = true;
+
+		if (isRenovate && filesApplyToPlatform(log.files, platform)) {
+			renovateMessages.push(parseRenovateMessage(log.message));
+			addIt = false;
+		}
 
 		// Translation updates often comes in format "Translation: Update pt_PT.po"
 		// but that's not useful in a changelog especially since most people
 		// don't know country and language codes. So we catch all these and
 		// bundle them all up in a single "Updated translations" at the end.
-		if (log.message.match(/Translation: Update .*?\.po/)) {
+		if (log.message.match(/Translation:\sUpdate\s.*?(\.po|[a-zA-Z][a-zA-Z]|[a-zA-Z][a-zA-Z]_[a-zA-Z][a-zA-Z])/)
+			|| log.message.match(/Update.+\.po/)
+		) {
 			// updatedTranslations = true;
+			addIt = false;
+		}
+
+		// Remove duplicate messages
+		if (output.find(l => l.message === log.message)) {
 			addIt = false;
 		}
 
@@ -138,11 +293,21 @@ function filterLogs(logs: LogEntry[], platform: Platform) {
 	// Actually we don't really need this info - translations are being updated all the time
 	// if (updatedTranslations) output.push({ message: 'Updated translations' });
 
+	const renovateSummary = summarizeRenovateMessages(renovateMessages);
+	if (renovateSummary) {
+		output.push({
+			author: { name: '', email: '', login: '' },
+			commit: '',
+			files: [],
+			message: renovateSummary,
+		});
+	}
+
 	return output;
 }
 
 function formatCommitMessage(commit: string, msg: string, author: Author, options: Options): string {
-	options = Object.assign({}, { publishFormat: 'full' }, options);
+	options = { publishFormat: 'full', ...options };
 
 	let output = '';
 
@@ -153,7 +318,7 @@ function formatCommitMessage(commit: string, msg: string, author: Author, option
 	const isPlatformPrefix = (prefixString: string) => {
 		const prefix = prefixString.split(',').map(p => p.trim().toLowerCase());
 		for (const p of prefix) {
-			if (['android', 'mobile', 'ios', 'desktop', 'cli', 'clipper', 'all', 'api', 'plugins', 'server'].indexOf(p) >= 0) return true;
+			if (['android', 'mobile', 'ios', 'desktop', 'windows', 'linux', 'macos', 'cli', 'clipper', 'all', 'api', 'plugins', 'server', 'cloud'].indexOf(p) >= 0) return true;
 		}
 		return false;
 	};
@@ -271,7 +436,9 @@ function formatCommitMessage(commit: string, msg: string, author: Author, option
 		} else {
 			const commitStrings = [commit.substr(0, 7)];
 			if (authorMd) commitStrings.push(`by ${authorMd}`);
-			output += ` (${commitStrings.join(' ')})`;
+			if (commitStrings.join('').length) {
+				output += ` (${commitStrings.join(' ')})`;
+			}
 		}
 	}
 
@@ -301,10 +468,13 @@ function capitalizeFirstLetter(string: string) {
 async function findFirstRelevantTag(baseTag: string, platform: Platform, allTags: string[]) {
 	let baseTagIndex = allTags.indexOf(baseTag);
 	if (baseTagIndex < 0) baseTagIndex = allTags.length;
+	const baseVersion = versionFromTag(baseTag);
 
 	for (let i = baseTagIndex - 1; i >= 0; i--) {
 		const tag = allTags[i];
 		if (platformFromTag(tag) !== platform) continue;
+		const currentVersion = versionFromTag(tag);
+		if (compareVersions(baseVersion, currentVersion) <= 0) continue;
 
 		try {
 			const logs = await gitLog(tag);
@@ -369,8 +539,11 @@ async function main() {
 	console.info(changelogString.join('\n'));
 }
 
-main().catch((error) => {
-	console.error('Fatal error');
-	console.error(error);
-	process.exit(1);
-});
+if (require.main === module) {
+	// eslint-disable-next-line promise/prefer-await-to-then
+	main().catch((error) => {
+		console.error('Fatal error');
+		console.error(error);
+		process.exit(1);
+	});
+}

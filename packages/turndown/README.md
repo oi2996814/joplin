@@ -19,6 +19,9 @@ Convert HTML into Markdown with JavaScript.
 - Allow a rule to specify whether it wants its content escaped or not
 - Handle [non-OL ordered lists](https://developer.mozilla.org/en-US/docs/Web/CSS/list-style-type)
 - Added option `preserveImageTagsWithSize` to keep `<img/>` tags as HTML (no Markdown conversion) if they have width or height attributes
+- Added support for replacing unicode nonbreaking spaces with `&nbsp;` in output markdown.
+
+The `src/` folder of this fork is currently based on commit `97e4535ca76bb2e70d9caa2aa4d4686956b06d44` of the [upstream Turndown project](https://github.com/mixmark-io/turndown). The `test` and `config` folders are based on an earlier commit.
 
 ### to-markdown has been renamed to Turndown. See the [migration guide](https://github.com/domchristie/to-markdown/wiki/Migrating-from-to-markdown-to-Turndown) for details.
 
@@ -27,7 +30,7 @@ Convert HTML into Markdown with JavaScript.
 npm:
 
 ```
-npm install joplin-turndown
+npm install @joplin/turndown
 ```
 
 Browser:
@@ -37,6 +40,35 @@ Browser:
 ```
 
 For usage with RequireJS, UMD versions are located in `lib/turndown.umd.js` (for Node.js) and `lib/turndown.browser.umd.js` for browser usage. These files are generated when the npm package is published. To generate them manually, clone this repo and run `npm run build`.
+
+<details>
+<summary>Getting TypeScript typings</summary>
+
+Install typings:
+
+```sh
+npm install @types/turndown
+```
+
+Create a `declarations.d.ts` file:
+```ts
+declare module '@joplin/turndown' {
+  export { default } from 'turndown';
+}
+```
+
+Add the path to the `declarations.d.ts` file in the `"files"` array
+in your `tsconfig.json`:
+
+```json
+{
+  // ...
+  "files": ["declarations.d.ts"]
+  // ...
+}
+```
+
+</details>
 
 ## Usage
 

@@ -1,12 +1,12 @@
 import * as Mustache from 'mustache';
 import { filename } from '@joplin/lib/path-utils';
 import * as fs from 'fs-extra';
-import { TemplateParams } from './types';
+import { Partials, TemplateParams } from './types';
 import { headerAnchor } from '@joplin/renderer';
-const MarkdownIt = require('markdown-it');
+import * as MarkdownIt from 'markdown-it';
 
 export async function loadMustachePartials(partialDir: string) {
-	const output: Record<string, string> = {};
+	const output: Partials = {};
 	const files = await fs.readdir(partialDir);
 	for (const f of files) {
 		const name = filename(f);
@@ -24,16 +24,13 @@ export function renderMustache(contentHtml: string, templateParams: TemplatePara
 }
 
 export function getMarkdownIt() {
-	return new MarkdownIt({
+	const markdownIt = new MarkdownIt({
 		breaks: true,
 		linkify: true,
 		html: true,
 	});
-}
 
-export function markdownToPageHtml(md: string, templateParams: TemplateParams): string {
-	const markdownIt = getMarkdownIt();
-
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	markdownIt.core.ruler.push('tableClass', (state: any) => {
 		const tokens = state.tokens;
 		for (let i = 0; i < tokens.length; i++) {
@@ -47,7 +44,21 @@ export function markdownToPageHtml(md: string, templateParams: TemplateParams): 
 		}
 	});
 
-	markdownIt.use(headerAnchor);
-
-	return renderMustache(markdownIt.render(md), templateParams);
+	return markdownIt;
 }
+
+export function markdownToPageHtml(md: string, templateParams: TemplateParams): string {
+	const html = markdownToHtml(md);
+	return renderMustache(html, templateParams);
+}
+
+export const markdownToHtml = (md: string): string => {
+	const markdownIt = getMarkdownIt();
+	markdownIt.use(headerAnchor);
+	markdownIt.linkify.set({
+		'fuzzyLink': false,
+		'fuzzyIP': false,
+		'fuzzyEmail': false,
+	});
+	return markdownIt.render(md);
+};

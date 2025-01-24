@@ -1,5 +1,6 @@
 import { PaginationOrderDir } from '../../models/utils/types';
 import Api, { RequestMethod } from '../../services/rest/Api';
+import { extractMediaUrls } from './routes/notes';
 import shim from '../../shim';
 import { setupDatabaseAndSynchronizer, switchClient, checkThrowAsync, db, msleep, supportDir } from '../../testing/test-utils';
 import Folder from '../../models/Folder';
@@ -8,7 +9,9 @@ import Note from '../../models/Note';
 import Tag from '../../models/Tag';
 import NoteTag from '../../models/NoteTag';
 import ResourceService from '../../services/ResourceService';
-import SearchEngine from '../../services/searchengine/SearchEngine';
+import SearchEngine from '../search/SearchEngine';
+const { MarkupToHtml } = require('@joplin/renderer');
+import { ResourceEntity } from '../database/types';
 
 const createFolderForPagination = async (num: number, time: number) => {
 	await Folder.save({
@@ -32,13 +35,12 @@ const createNoteForPagination = async (numOrTitle: number | string, time: number
 
 let api: Api = null;
 
-describe('services_rest_Api', function() {
+describe('services/rest/Api', () => {
 
-	beforeEach(async (done) => {
+	beforeEach(async () => {
 		api = new Api();
 		await setupDatabaseAndSynchronizer(1);
 		await switchClient(1);
-		done();
 	});
 
 	it('should ping', (async () => {
@@ -69,7 +71,7 @@ describe('services_rest_Api', function() {
 
 	it('should delete folders', (async () => {
 		const f1 = await Folder.save({ title: 'mon carnet' });
-		await api.route(RequestMethod.DELETE, `folders/${f1.id}`);
+		await api.route(RequestMethod.DELETE, `folders/${f1.id}`, { permanent: '1' });
 
 		const f1b = await Folder.load(f1.id);
 		expect(!f1b).toBe(true);
@@ -106,6 +108,22 @@ describe('services_rest_Api', function() {
 		const response = await api.route(RequestMethod.GET, `folders/${f1.id}/notes`);
 		expect(response.items.length).toBe(2);
 	}));
+
+	it('should return folders as a tree', async () => {
+		const folder1 = await Folder.save({ title: 'Folder 1' });
+		await Folder.save({ title: 'Folder 2', parent_id: folder1.id });
+		await Folder.save({ title: 'Folder 3', parent_id: folder1.id });
+
+		const response = await api.route(RequestMethod.GET, 'folders', { as_tree: 1 });
+		expect(response).toMatchObject([{
+			title: 'Folder 1',
+			id: folder1.id,
+			children: [
+				{ title: 'Folder 2' },
+				{ title: 'Folder 3' },
+			],
+		}]);
+	});
 
 	it('should fail on invalid paths', (async () => {
 		const hasThrown = await checkThrowAsync(async () => await api.route(RequestMethod.GET, 'schtroumpf'));
@@ -152,6 +170,7 @@ describe('services_rest_Api', function() {
 	}));
 
 	it('should allow setting note properties', (async () => {
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 		let response: any = null;
 		const f = await Folder.save({ title: 'mon carnet' });
 
@@ -161,6 +180,7 @@ describe('services_rest_Api', function() {
 			latitude: '48.732071',
 			longitude: '-3.458700',
 			altitude: '21',
+			source: 'testing',
 		}));
 
 		const noteId = response.id;
@@ -170,12 +190,14 @@ describe('services_rest_Api', function() {
 			expect(note.latitude).toBe('48.73207100');
 			expect(note.longitude).toBe('-3.45870000');
 			expect(note.altitude).toBe('21.0000');
+			expect(note.source).toBe('testing');
 		}
 
 		await api.route(RequestMethod.PUT, `notes/${noteId}`, null, JSON.stringify({
 			latitude: '49',
 			longitude: '-3',
 			altitude: '22',
+			source: 'testing 2',
 		}));
 
 		{
@@ -183,6 +205,7 @@ describe('services_rest_Api', function() {
 			expect(note.latitude).toBe('49.00000000');
 			expect(note.longitude).toBe('-3.00000000');
 			expect(note.altitude).toBe('22.0000');
+			expect(note.source).toBe('testing 2');
 		}
 	}));
 
@@ -296,7 +319,11 @@ describe('services_rest_Api', function() {
 			title: 'testing 4',
 			parent_id: f.id,
 			is_todo: '1',
+			todo_due: '2',
+			todo_completed: '3',
 		}));
+		expect(response.todo_due).toBe(2);
+		expect(response.todo_completed).toBe(3);
 	}));
 
 	it('should create folders with supplied ID', (async () => {
@@ -325,7 +352,7 @@ describe('services_rest_Api', function() {
 		expect(response.body.indexOf(resource.id) >= 0).toBe(true);
 	}));
 
-	it('should not compress images uploaded through resource api', (async () => {
+	it('should not compress images uploaded through resource API', (async () => {
 		const originalImagePath = `${supportDir}/photo-large.png`;
 		await api.route(RequestMethod.POST, 'resources', null, JSON.stringify({
 			title: 'testing resource',
@@ -343,6 +370,80 @@ describe('services_rest_Api', function() {
 		const uploadedImageSize = (await shim.fsDriver().stat(uploadedImagePath)).size;
 
 		expect(originalImageSize).toEqual(uploadedImageSize);
+	}));
+
+	it('should update a resource', (async () => {
+		await api.route(RequestMethod.POST, 'resources', null, JSON.stringify({
+			title: 'resource',
+		}), [
+			{
+				path: `${supportDir}/photo.jpg`,
+			},
+		]);
+
+		const resourceV1: ResourceEntity = (await Resource.all())[0];
+
+		await msleep(1);
+
+		await api.route(RequestMethod.PUT, `resources/${resourceV1.id}`, null, JSON.stringify({
+			title: 'resource mod',
+		}), [
+			{
+				path: `${supportDir}/photo-large.png`,
+			},
+		]);
+
+		const resourceV2: ResourceEntity = (await Resource.all())[0];
+
+		expect(resourceV2.title).toBe('resource mod');
+		expect(resourceV2.mime).toBe('image/png');
+		expect(resourceV2.file_extension).toBe('png');
+		expect(resourceV2.updated_time).toBeGreaterThan(resourceV1.updated_time);
+		expect(resourceV2.created_time).toBe(resourceV1.created_time);
+		expect(resourceV2.size).toBeGreaterThan(resourceV1.size);
+
+		expect(resourceV2.size).toBe((await shim.fsDriver().stat(Resource.fullPath(resourceV2))).size);
+	}));
+
+	it('should allow updating a resource file only', (async () => {
+		await api.route(RequestMethod.POST, 'resources', null, JSON.stringify({
+			title: 'resource',
+		}), [{ path: `${supportDir}/photo.jpg` }]);
+
+		const resourceV1: ResourceEntity = (await Resource.all())[0];
+
+		await msleep(1);
+
+		await api.route(RequestMethod.PUT, `resources/${resourceV1.id}`, null, null, [
+			{
+				path: `${supportDir}/photo-large.png`,
+			},
+		]);
+
+		const resourceV2: ResourceEntity = (await Resource.all())[0];
+
+		// It should have updated the file content, but not the metadata
+		expect(resourceV2.title).toBe(resourceV1.title);
+		expect(resourceV2.size).toBeGreaterThan(resourceV1.size);
+	}));
+
+	it('should update resource properties', (async () => {
+		await api.route(RequestMethod.POST, 'resources', null, JSON.stringify({
+			title: 'resource',
+		}), [{ path: `${supportDir}/photo.jpg` }]);
+
+		const resourceV1: ResourceEntity = (await Resource.all())[0];
+
+		await msleep(1);
+
+		await api.route(RequestMethod.PUT, `resources/${resourceV1.id}`, null, JSON.stringify({
+			title: 'my new title',
+		}));
+
+		const resourceV2: ResourceEntity = (await Resource.all())[0];
+
+		expect(resourceV2.title).toBe('my new title');
+		expect(resourceV2.mime).toBe(resourceV1.mime);
 	}));
 
 	it('should delete resources', (async () => {
@@ -375,6 +476,53 @@ describe('services_rest_Api', function() {
 		}));
 
 		expect(response.body).toBe('**Bold text**');
+	}));
+
+	it('should extract media urls from body', (() => {
+		const tests = [
+			{
+				language: MarkupToHtml.MARKUP_LANGUAGE_HTML,
+				body: '<div> <img src="https://example.com/img.png" /> <embed src="https://example.com/sample.pdf"/> <object data="https://example.com/file.PDF"></object> </div>',
+				result: ['https://example.com/img.png', 'https://example.com/sample.pdf', 'https://example.com/file.PDF'],
+			},
+			{
+				language: MarkupToHtml.MARKUP_LANGUAGE_MARKDOWN,
+				body: 'test text \n ![img 1](https://example.com/img1.png) [embedded_pdf](https://example.com/sample1.pdf) [embedded_pdf](https://example.com/file.PDF)',
+				result: ['https://example.com/img1.png', 'https://example.com/sample1.pdf', 'https://example.com/file.PDF'],
+			},
+			{
+				language: MarkupToHtml.MARKUP_LANGUAGE_MARKDOWN,
+				body: '> <a id="attachment68076"></a>[![Enable or Disable Sync Your Settings in Windows 10-disabled_sync_your_settings.png](https://www.tenforums.com/attachments/tutorials/68076d1485964056t-enable-disable-sync-your-settings-windows-10-a-disabled_sync_your_settings.png?s=0bbd1c630a9a924f05134d51b4768d2b "Enable or Disable Sync Your Settings in Windows 10-disabled_sync_your_settings.png")](https://www.tenforums.com/attachments/tutorials/68076d1457326453-enable-disable-sync-your-settings-windows-10-a-disabled_sync_your_settings.png?s=0bbd1c630a9a924f05134d51b4768d2b)',
+				result: ['https://www.tenforums.com/attachments/tutorials/68076d1485964056t-enable-disable-sync-your-settings-windows-10-a-disabled_sync_your_settings.png?s=0bbd1c630a9a924f05134d51b4768d2b'],
+			},
+			{
+				language: MarkupToHtml.MARKUP_LANGUAGE_HTML,
+				body: '<div> <embed src="https://example.com/sample"/> <embed /> <object data="https://example.com/file.pdfff"></object> <a href="https://test.com/file.pdf">Link</a> </div>',
+				result: [],
+			},
+		];
+		// eslint-disable-next-line github/array-foreach -- Old code before rule was applied
+		tests.forEach((test) => {
+			const urls = extractMediaUrls(test.language, test.body);
+			expect(urls).toEqual(test.result);
+		});
+	}));
+
+	it('should create notes with pdf embeds', (async () => {
+		let response = null;
+		const f = await Folder.save({ title: 'pdf test1' });
+
+		response = await api.route(RequestMethod.POST, 'notes', null, JSON.stringify({
+			title: 'testing PDF embeds',
+			parent_id: f.id,
+			body_html: `<div> <embed src="file://${supportDir}/welcome.pdf" type="application/pdf" /> </div>`,
+		}));
+
+		const resources = await Resource.all();
+		expect(resources.length).toBe(1);
+
+		const resource = resources[0];
+		expect(response.body.indexOf(resource.id) >= 0).toBe(true);
 	}));
 
 	it('should handle tokens', (async () => {
@@ -433,6 +581,7 @@ describe('services_rest_Api', function() {
 		expect(response3.items.length).toBe(2);
 
 		// Also check that it only returns the required fields
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 		response3.items.sort((a: any, b: any) => {
 			return a.id < b.id ? -1 : +1;
 		});

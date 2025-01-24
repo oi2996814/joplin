@@ -1,15 +1,15 @@
-import Setting from './models/Setting';
+import Setting, { Env } from './models/Setting';
 import { reg } from './registry';
 
 const sync = {
 	start: jest.fn().mockReturnValue({}),
 };
 
-describe('Registry', function() {
+describe('Registry', () => {
 	let originalSyncTarget: typeof reg.syncTarget;
 
 	beforeAll(() => {
-		Setting.setConstant('env', 'prod');
+		Setting.setConstant('env', Env.Prod);
 		originalSyncTarget = reg.syncTarget;
 		reg.syncTarget = () => ({
 			isAuthenticated: () => true,
@@ -18,7 +18,7 @@ describe('Registry', function() {
 	});
 
 	afterAll(() => {
-		Setting.setConstant('env', 'dev');
+		Setting.setConstant('env', Env.Dev);
 		reg.syncTarget = originalSyncTarget;
 	});
 
@@ -49,6 +49,7 @@ describe('Registry', function() {
 
 		it('should sync if do wifi check is false', done => {
 			void reg.scheduleSync(1, null, false)
+			// eslint-disable-next-line promise/prefer-await-to-then -- Old code before rule was applied
 				.then(() =>{
 					expect(sync.start).toHaveBeenCalled();
 					done();

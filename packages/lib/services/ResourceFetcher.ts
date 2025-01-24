@@ -2,8 +2,9 @@ import Resource from '../models/Resource';
 import Setting from '../models/Setting';
 import BaseService from './BaseService';
 import ResourceService from './ResourceService';
-import Logger from '../Logger';
+import Logger from '@joplin/utils/Logger';
 import shim from '../shim';
+import notifyDisabledSyncItems from './synchronizer/utils/checkDisabledSyncItemsNotification';
 const { Dirnames } = require('./synchronizer/utils/types');
 const EventEmitter = require('events');
 
@@ -11,56 +12,68 @@ export default class ResourceFetcher extends BaseService {
 
 	public static instance_: ResourceFetcher;
 
+	// eslint-disable-next-line @typescript-eslint/ban-types, @typescript-eslint/no-explicit-any -- Old code before rule was applied, Old code before rule was applied
 	public dispatch: Function = (_o: any) => {};
 	private logger_: Logger = new Logger();
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	private queue_: any[] = [];
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	private fetchingItems_: any = {};
 	private maxDownloads_ = 3;
 	private addingResources_ = false;
 	private eventEmitter_ = new EventEmitter();
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	private autoAddResourcesCalls_: any[] = [];
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	private fileApi_: any;
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	private updateReportIID_: any;
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	private scheduleQueueProcessIID_: any;
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	private scheduleAutoAddResourcesIID_: any;
 
-	constructor(fileApi: any = null) {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+	public constructor(fileApi: any = null) {
 		super();
 		this.setFileApi(fileApi);
 	}
 
-	static instance() {
+	public static instance() {
 		if (ResourceFetcher.instance_) return ResourceFetcher.instance_;
 		ResourceFetcher.instance_ = new ResourceFetcher();
 		return ResourceFetcher.instance_;
 	}
 
-	on(eventName: string, callback: Function) {
+	// eslint-disable-next-line @typescript-eslint/ban-types -- Old code before rule was applied
+	public on(eventName: string, callback: Function) {
 		return this.eventEmitter_.on(eventName, callback);
 	}
 
-	off(eventName: string, callback: Function) {
+	// eslint-disable-next-line @typescript-eslint/ban-types -- Old code before rule was applied
+	public off(eventName: string, callback: Function) {
 		return this.eventEmitter_.removeListener(eventName, callback);
 	}
 
-	setLogger(logger: Logger) {
+	public setLogger(logger: Logger) {
 		this.logger_ = logger;
 	}
 
-	logger() {
+	public logger() {
 		return this.logger_;
 	}
 
-	setFileApi(v: any) {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+	public setFileApi(v: any) {
 		if (v !== null && typeof v !== 'function') throw new Error(`fileApi must be a function that returns the API. Type is ${typeof v}`);
 		this.fileApi_ = v;
 	}
 
-	async fileApi() {
+	public async fileApi() {
 		return this.fileApi_();
 	}
 
-	queuedItemIndex_(resourceId: string) {
+	private queuedItemIndex_(resourceId: string) {
 		for (let i = 0; i < this.fetchingItems_.length; i++) {
 			const item = this.fetchingItems_[i];
 			if (item.id === resourceId) return i;
@@ -68,7 +81,7 @@ export default class ResourceFetcher extends BaseService {
 		return -1;
 	}
 
-	updateReport() {
+	public updateReport() {
 		const fetchingCount = Object.keys(this.fetchingItems_).length;
 		this.dispatch({
 			type: 'RESOURCE_FETCHER_SET',
@@ -77,7 +90,7 @@ export default class ResourceFetcher extends BaseService {
 		});
 	}
 
-	async markForDownload(resourceIds: string[]) {
+	public async markForDownload(resourceIds: string[]) {
 		if (!Array.isArray(resourceIds)) resourceIds = [resourceIds];
 
 		const fetchStatuses = await Resource.fetchStatuses(resourceIds);
@@ -97,7 +110,7 @@ export default class ResourceFetcher extends BaseService {
 		}
 	}
 
-	queueDownload_(resourceId: string, priority: string = null) {
+	public queueDownload_(resourceId: string, priority: string = null) {
 		if (priority === null) priority = 'normal';
 
 		const index = this.queuedItemIndex_(resourceId);
@@ -118,7 +131,7 @@ export default class ResourceFetcher extends BaseService {
 		return true;
 	}
 
-	async startDownload_(resourceId: string) {
+	private async startDownload_(resourceId: string) {
 		if (this.fetchingItems_[resourceId]) return;
 		this.fetchingItems_[resourceId] = true;
 
@@ -179,21 +192,21 @@ export default class ResourceFetcher extends BaseService {
 
 		this.eventEmitter_.emit('downloadStarted', { id: resource.id });
 
-		fileApi
-			.get(remoteResourceContentPath, { path: localResourceContentPath, target: 'file' })
-			.then(async () => {
-				await Resource.setLocalState(resource, { fetch_status: Resource.FETCH_STATUS_DONE });
-				this.logger().debug(`ResourceFetcher: Resource downloaded: ${resource.id}`);
-				await completeDownload(true, localResourceContentPath);
-			})
-			.catch(async (error: any) => {
-				this.logger().error(`ResourceFetcher: Could not download resource: ${resource.id}`, error);
-				await Resource.setLocalState(resource, { fetch_status: Resource.FETCH_STATUS_ERROR, fetch_error: error.message });
-				await completeDownload();
-			});
+		try {
+			await fileApi.get(remoteResourceContentPath, { path: localResourceContentPath, target: 'file' });
+			if (!(await shim.fsDriver().exists(localResourceContentPath))) throw new Error(`Resource not found: ${resource.id}`);
+
+			await Resource.setLocalState(resource, { fetch_status: Resource.FETCH_STATUS_DONE });
+			this.logger().debug(`ResourceFetcher: Resource downloaded: ${resource.id}`);
+			await completeDownload(true, localResourceContentPath);
+		} catch (error) {
+			this.logger().error(`ResourceFetcher: Could not download resource: ${resource.id}`, error);
+			await Resource.setLocalState(resource, { fetch_status: Resource.FETCH_STATUS_ERROR, fetch_error: error.message });
+			await completeDownload();
+		}
 	}
 
-	processQueue_() {
+	private processQueue_() {
 		while (Object.getOwnPropertyNames(this.fetchingItems_).length < this.maxDownloads_) {
 			if (!this.queue_.length) break;
 			const item = this.queue_.splice(0, 1)[0];
@@ -205,7 +218,7 @@ export default class ResourceFetcher extends BaseService {
 		}
 	}
 
-	async waitForAllFinished() {
+	public async waitForAllFinished() {
 		return new Promise((resolve) => {
 			const iid = shim.setInterval(() => {
 				if (!this.updateReportIID_ &&
@@ -221,7 +234,7 @@ export default class ResourceFetcher extends BaseService {
 		});
 	}
 
-	async autoAddResources(limit: number = null) {
+	public async autoAddResources(limit: number = null) {
 		this.autoAddResourcesCalls_.push(true);
 		try {
 			if (limit === null) limit = 10;
@@ -240,21 +253,25 @@ export default class ResourceFetcher extends BaseService {
 
 			this.logger().info(`ResourceFetcher: Auto-added resources: ${count}`);
 
-			const errorCount = await Resource.downloadStatusCounts(Resource.FETCH_STATUS_ERROR);
-			if (errorCount) this.dispatch({ type: 'SYNC_HAS_DISABLED_SYNC_ITEMS' });
-
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+			await notifyDisabledSyncItems((action: any) => this.dispatch(action));
 		} finally {
 			this.addingResources_ = false;
 			this.autoAddResourcesCalls_.pop();
 		}
 	}
 
-	async start() {
+	public async start() {
 		await Resource.resetStartedFetchStatus();
 		void this.autoAddResources(10);
 	}
 
-	scheduleQueueProcess() {
+	public async startAndWait() {
+		await this.start();
+		await this.waitForAllFinished();
+	}
+
+	public scheduleQueueProcess() {
 		if (this.scheduleQueueProcessIID_) {
 			shim.clearTimeout(this.scheduleQueueProcessIID_);
 			this.scheduleQueueProcessIID_ = null;
@@ -266,7 +283,7 @@ export default class ResourceFetcher extends BaseService {
 		}, 100);
 	}
 
-	scheduleAutoAddResources() {
+	public scheduleAutoAddResources() {
 		if (this.scheduleAutoAddResourcesIID_) return;
 
 		this.scheduleAutoAddResourcesIID_ = shim.setTimeout(() => {
@@ -275,12 +292,12 @@ export default class ResourceFetcher extends BaseService {
 		}, 1000);
 	}
 
-	async fetchAll() {
+	public async fetchAll() {
 		await Resource.resetStartedFetchStatus();
 		void this.autoAddResources(null);
 	}
 
-	async destroy() {
+	public async destroy() {
 		this.eventEmitter_.removeAllListeners();
 		if (this.scheduleQueueProcessIID_) {
 			shim.clearTimeout(this.scheduleQueueProcessIID_);

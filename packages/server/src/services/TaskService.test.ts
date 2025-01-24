@@ -1,14 +1,38 @@
 import config from '../config';
 import { Models } from '../models/factory';
-import { afterAllTests, beforeAllDb, beforeEachDb, expectThrow, models, msleep } from '../utils/testing/testUtils';
+import { ErrorCode } from '../utils/errors';
+import { afterAllTests, beforeAllDb, beforeEachDb, expectThrow, models } from '../utils/testing/testUtils';
 import { Env } from '../utils/types';
+import { TaskId } from './database/types';
 import TaskService, { RunType, Task } from './TaskService';
 
 const newService = () => {
-	return new TaskService(Env.Dev, models(), config());
+	return new TaskService(Env.Dev, models(), config(), {
+		email: null,
+		mustache: null,
+		tasks: null,
+		userDeletion: null,
+	});
 };
 
-describe('TaskService', function() {
+const createDemoTasks = (): Task[] => {
+	return [
+		{
+			id: TaskId.DeleteExpiredTokens,
+			description: '',
+			run: (_models: Models) => {},
+			schedule: '',
+		},
+		{
+			id: TaskId.CompressOldChanges,
+			description: '',
+			run: (_models: Models) => {},
+			schedule: '',
+		},
+	];
+};
+
+describe('TaskService', () => {
 
 	beforeAll(async () => {
 		await beforeAllDb('TaskService');
@@ -22,63 +46,69 @@ describe('TaskService', function() {
 		await beforeEachDb();
 	});
 
-	test('should register a task', async function() {
+	test('should register a task', async () => {
 		const service = newService();
 
-		const task: Task = {
-			id: 123456,
-			description: '',
-			run: (_models: Models) => {},
-			schedule: '',
-		};
+		const tasks = createDemoTasks();
+		await service.registerTasks(tasks);
 
-		service.registerTask(task);
-
-		expect(service.tasks[123456]).toBeTruthy();
-		await expectThrow(async () => service.registerTask(task));
+		expect(service.tasks[TaskId.DeleteExpiredTokens]).toBeTruthy();
+		expect(service.tasks[TaskId.CompressOldChanges]).toBeTruthy();
+		await expectThrow(async () => service.registerTask(tasks[0]));
 	});
 
-	test('should run a task', async function() {
+	test('should not run if task is disabled', async () => {
 		const service = newService();
 
-		let finishTask = false;
 		let taskHasRan = false;
 
-		const taskId = 123456;
-
-		const task: Task = {
-			id: taskId,
-			description: '',
-			run: async (_models: Models) => {
-				const iid = setInterval(() => {
-					if (finishTask) {
-						clearInterval(iid);
-						taskHasRan = true;
-					}
-				}, 1);
-			},
-			schedule: '',
+		const tasks = createDemoTasks();
+		tasks[0].run = async (_models: Models) => {
+			taskHasRan = true;
 		};
+		await service.registerTasks(tasks);
+		const taskId = tasks[0].id;
 
-		service.registerTask(task);
+		await service.runTask(taskId, RunType.Manual);
+		expect(taskHasRan).toBe(true);
 
-		expect(service.taskState(taskId).running).toBe(false);
+		taskHasRan = false;
+		await models().taskState().disable(taskId);
+		await service.runTask(taskId, RunType.Manual);
+		expect(taskHasRan).toBe(false);
+	});
 
-		const startTime = new Date();
+	test('should not run if task is already running', async () => {
+		const service = newService();
 
-		void service.runTask(taskId, RunType.Manual);
-		expect(service.taskState(taskId).running).toBe(true);
+		const tasks = createDemoTasks();
+		await service.registerTasks(tasks);
+		const task = tasks[0];
 
-		while (!taskHasRan) {
-			await msleep(1);
-			finishTask = true;
-		}
+		const state = await models().taskState().loadByTaskId(task.id);
+		await models().taskState().save({ id: state.id, running: 1 });
 
-		expect(service.taskState(taskId).running).toBe(false);
+		await expectThrow(async () => service.runTask(task.id, RunType.Manual), ErrorCode.TaskAlreadyRunning);
+	});
 
-		const events = await service.taskLastEvents(taskId);
-		expect(events.taskStarted.created_time).toBeGreaterThanOrEqual(startTime.getTime());
-		expect(events.taskCompleted.created_time).toBeGreaterThan(startTime.getTime());
+	test('should reset interrupted tasks', async () => {
+		const service = newService();
+
+		const tasks = createDemoTasks();
+		await service.registerTasks(tasks);
+		const task = tasks[0];
+
+		const state = await models().taskState().loadByTaskId(task.id);
+		await models().taskState().save({ id: state.id, running: 1 });
+
+		const stateBefore = await models().taskState().loadByTaskId(task.id);
+
+		await service.resetInterruptedTasks();
+
+		const stateAfter = await models().taskState().loadByTaskId(task.id);
+
+		expect(stateBefore.running).toBe(1);
+		expect(stateAfter.running).toBe(0);
 	});
 
 });

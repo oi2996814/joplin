@@ -1,40 +1,27 @@
 import InMemoryCache from './InMemoryCache';
 import noteStyle from './noteStyle';
-import { fileExtension } from './pathUtils';
+import { fileExtension } from '@joplin/utils/path';
 import setupLinkify from './MdToHtml/setupLinkify';
 import validateLinks from './MdToHtml/validateLinks';
-import { ItemIdToUrlHandler } from './utils';
-import { RenderResult, RenderResultPluginAsset } from './MarkupToHtml';
 import { Options as NoteStyleOptions } from './noteStyle';
-const hljs = require('highlight.js');
+import { FsDriver, ItemIdToUrlHandler, MarkupRenderer, OptionsResourceModel, RenderOptions, RenderResult, RenderResultPluginAsset, ResourceInfos } from './types';
+import hljs from './highlight';
+import * as MarkdownIt from 'markdown-it';
 
-const MarkdownIt = require('markdown-it');
+const Entities = require('html-entities').AllHtmlEntities;
+const htmlentities = new Entities().encode;
 const md5 = require('md5');
 
-export interface RenderOptions {
-	contentMaxWidth?: number;
-	bodyOnly?: boolean;
-	splitted?: boolean;
-	externalAssetsOnly?: boolean;
-	postMessageSyntax?: string;
-	highlightedKeywords?: string[];
-	codeTheme?: string;
-	theme?: any;
-	plugins?: Record<string, any>;
-	audioPlayerEnabled?: boolean;
-	videoPlayerEnabled?: boolean;
-	pdfViewerEnabled?: boolean;
-	codeHighlightCacheKey?: string;
-	plainResourceRendering?: boolean;
-	mapsToLine?: boolean;
-}
-
 interface RendererRule {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	install(context: any, ruleOptions: any): any;
-	assets?(theme: any): any;
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+	assets?(theme: any): PluginAsset[];
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	plugin?: any;
 	assetPath?: string;
 	assetPathIsAbsolute?: boolean;
+	pluginId?: string;
 }
 
 interface RendererRules {
@@ -42,7 +29,9 @@ interface RendererRules {
 }
 
 interface RendererPlugin {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	module: any;
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	options?: any;
 }
 
@@ -65,6 +54,7 @@ const rules: RendererRules = {
 	fountain: require('./MdToHtml/rules/fountain').default,
 	mermaid: require('./MdToHtml/rules/mermaid').default,
 	source_map: require('./MdToHtml/rules/source_map').default,
+	tableHorizontallyScrollable: require('./MdToHtml/rules/tableHorizontallyScrollable').default,
 };
 
 const uslug = require('@joplin/fork-uslug');
@@ -81,7 +71,7 @@ const plugins: RendererPlugins = {
 	emoji: { module: require('markdown-it-emoji') },
 	insert: { module: require('markdown-it-ins') },
 	multitable: { module: require('markdown-it-multimd-table'), options: { multiline: true, rowspan: true, headerless: true } },
-	toc: { module: require('markdown-it-toc-done-right'), options: { listType: 'ul', slugify: slugify } },
+	toc: { module: require('markdown-it-toc-done-right'), options: { listType: 'ul', slugify: slugify, uniqueSlugStartIndex: 2 } },
 	expand_tabs: { module: require('markdown-it-expand-tabs'), options: { tabWidth: 4 } },
 };
 const defaultNoteStyle = require('./defaultNoteStyle');
@@ -95,21 +85,25 @@ const inMemoryCache = new InMemoryCache(20);
 
 export interface ExtraRendererRule {
 	id: string;
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	module: any;
 	assetPath: string;
+	pluginId: string;
 }
 
 export interface Options {
 	resourceBaseUrl?: string;
-	ResourceModel?: any;
+	ResourceModel?: OptionsResourceModel;
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	pluginOptions?: any;
 	tempDir?: string;
-	fsDriver?: any;
+	fsDriver?: FsDriver;
 	extraRendererRules?: ExtraRendererRule[];
 	customCss?: string;
 }
 
 interface PluginAsset {
+	source?: string;
 	mime?: string;
 	inline?: boolean;
 	name?: string;
@@ -117,7 +111,7 @@ interface PluginAsset {
 }
 
 // Types are a bit of a mess when it comes to plugin assets. Something
-// called "pluginAsset" in this class might refer to sublty different
+// called "pluginAsset" in this class might refer to subtly different
 // types. The logic should be cleaned up before types are added.
 interface PluginAssets {
 	[pluginName: string]: PluginAsset[];
@@ -125,31 +119,56 @@ interface PluginAssets {
 
 export interface Link {
 	href: string;
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	resource: any;
 	resourceReady: boolean;
 	resourceFullPath: string;
 }
 
 interface PluginContext {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	css: any;
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	pluginAssets: any;
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	cache: any;
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	userData: any;
 	currentLinks: Link[];
+
+	// This must be set by the plugin to indicate whether the document contains markup that was
+	// processed by the plugin or not. Currently this information is then used to remove unnecessary
+	// plugin assets from the rendered document. This is particularly useful when exporting as HTML
+	// since it can reduce the size from several MB to a few KB.
+	pluginWasUsed: {
+		mermaid: boolean;
+		katex: boolean;
+	};
+}
+
+export enum LinkRenderingType {
+	// linkRenderingType = 1 is the regular rendering and clicking on it is handled via embedded JS (in onclick attribute)
+	JavaScriptHandler = 1,
+
+	// linkRenderingType = 2 gives a plain link with no JS. Caller needs to handle clicking on the link.
+	HrefHandler = 2,
 }
 
 export interface RuleOptions {
 	context: PluginContext;
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	theme: any;
 	postMessageSyntax: string;
-	ResourceModel: any;
+	ResourceModel: OptionsResourceModel;
 	resourceBaseUrl: string;
-	resources: any; // resourceId: Resource
+	resources: ResourceInfos; // resourceId: Resource
 
 	// Used by checkboxes to specify how it should be rendered
 	checkboxRenderingType?: number;
+	checkboxDisabled?: boolean;
 
 	// Used by the keyword highlighting plugin (mobile only)
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	highlightedKeywords?: any[];
 
 	// Use by resource-rendering logic to signify that it should be rendered
@@ -162,33 +181,53 @@ export interface RuleOptions {
 	enableLongPress?: boolean;
 
 	// Use by `link_open` rule.
-	// linkRenderingType = 1 is the regular rendering and clicking on it is handled via embedded JS (in onclick attribute)
-	// linkRenderingType = 2 gives a plain link with no JS. Caller needs to handle clicking on the link.
-	linkRenderingType?: number;
+	linkRenderingType?: LinkRenderingType;
+
+	// A list of MIME types for which an edit button appears on tap/hover.
+	// Used by the image editor in the mobile app.
+	editPopupFiletypes?: string[];
+
+	// Should be the string representation a function that accepts two arguments:
+	// the target element to have the popup shown for and the id of the resource to edit.
+	createEditPopupSyntax?: string;
+	destroyEditPopupSyntax?: string;
 
 	audioPlayerEnabled: boolean;
 	videoPlayerEnabled: boolean;
 	pdfViewerEnabled: boolean;
-
+	useCustomPdfViewer: boolean;
+	noteId?: string;
+	vendorDir?: string;
 	itemIdToUrl?: ItemIdToUrlHandler;
+
+	// Passed to the HTML sanitizer: Allows file:// URLs with
+	// paths with the included prefixes.
+	allowedFilePrefixes?: string[];
+
+	platformName?: string;
 }
 
-export default class MdToHtml {
+export default class MdToHtml implements MarkupRenderer {
 
 	private resourceBaseUrl_: string;
-	private ResourceModel_: any;
+	private ResourceModel_: OptionsResourceModel;
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	private contextCache_: any;
-	private fsDriver_: any;
+	private fsDriver_: FsDriver;
 
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	private cachedOutputs_: any = {};
 	private lastCodeHighlightCacheKey_: string = null;
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	private cachedHighlightedCode_: any = {};
 
 	// Markdown-It plugin options (not Joplin plugin options)
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	private pluginOptions_: any = {};
 	private extraRendererRules_: RendererRules = {};
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	private allProcessedAssets_: any = {};
-	private customCss_: string = '';
+	private customCss_ = '';
 
 	public constructor(options: Options = null) {
 		if (!options) options = {};
@@ -214,7 +253,7 @@ export default class MdToHtml {
 
 		if (options.extraRendererRules) {
 			for (const rule of options.extraRendererRules) {
-				this.loadExtraRendererRule(rule.id, rule.assetPath, rule.module);
+				this.loadExtraRendererRule(rule.id, rule.assetPath, rule.module, rule.pluginId);
 			}
 		}
 
@@ -239,9 +278,7 @@ export default class MdToHtml {
 		if (name === 'link_close') name = 'mediaPlayers';
 
 		let o = this.pluginOptions_[name] ? this.pluginOptions_[name] : {};
-		o = Object.assign({
-			enabled: true,
-		}, o);
+		o = { enabled: true, ...o };
 
 		return o;
 	}
@@ -251,11 +288,14 @@ export default class MdToHtml {
 	}
 
 	// `module` is a file that has already been `required()`
-	public loadExtraRendererRule(id: string, assetPath: string, module: any) {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+	public loadExtraRendererRule(id: string, assetPath: string, module: any, pluginId: string) {
 		if (this.extraRendererRules_[id]) throw new Error(`A renderer rule with this ID has already been loaded: ${id}`);
+
 		this.extraRendererRules_[id] = {
 			...module,
 			assetPath,
+			pluginId: pluginId,
 			assetPathIsAbsolute: true,
 		};
 	}
@@ -305,12 +345,14 @@ export default class MdToHtml {
 					const name = `${pluginName}/${asset.name}`;
 					const assetPath = rule?.assetPath ? `${rule.assetPath}/${asset.name}` : `pluginAssets/${name}`;
 
-					files.push(Object.assign({}, asset, {
+					files.push({
+						...asset,
+						source: asset.source,
 						name: name,
 						path: assetPath,
 						pathIsAbsolute: !!rule && !!rule.assetPathIsAbsolute,
 						mime: mime,
-					}));
+					});
 				}
 			}
 		}
@@ -324,12 +366,14 @@ export default class MdToHtml {
 
 	// This return all the assets for all the plugins. Since it is called
 	// on each render, the result is cached.
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	private allProcessedAssets(rules: RendererRules, theme: any, codeTheme: string) {
 		const cacheKey: string = theme.cacheKey + codeTheme;
 
 		if (this.allProcessedAssets_[cacheKey]) return this.allProcessedAssets_[cacheKey];
 
-		const assets: any = {};
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+		const assets: PluginAssets = {};
 		for (const key in rules) {
 			if (!this.pluginEnabled(key)) continue;
 			const rule = rules[key];
@@ -351,7 +395,9 @@ export default class MdToHtml {
 	}
 
 	// This is similar to allProcessedAssets() but used only by the Rich Text editor
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	public async allAssets(theme: any, noteStyleOptions: NoteStyleOptions = null) {
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 		const assets: any = {};
 		for (const key in rules) {
 			if (!this.pluginEnabled(key)) continue;
@@ -369,6 +415,7 @@ export default class MdToHtml {
 		return output.pluginAssets;
 	}
 
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	private async outputAssetsToExternalAssets_(output: any) {
 		for (const cssString of output.cssStrings) {
 			const filePath = await this.fsDriver().cacheCssToFile(cssString);
@@ -414,6 +461,7 @@ export default class MdToHtml {
 	}
 
 	// "theme" is the theme as returned by themeStyle()
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	public async render(body: string, theme: any = null, options: RenderOptions = null): Promise<RenderResult> {
 
 		options = {
@@ -428,7 +476,7 @@ export default class MdToHtml {
 			postMessageSyntax: 'postMessage',
 			highlightedKeywords: [],
 			codeTheme: 'atom-one-light.css',
-			theme: Object.assign({}, defaultNoteStyle, theme),
+			theme: { ...defaultNoteStyle, ...theme },
 			plugins: {},
 
 			audioPlayerEnabled: this.pluginEnabled('audioPlayer'),
@@ -436,6 +484,7 @@ export default class MdToHtml {
 			pdfViewerEnabled: this.pluginEnabled('pdfViewer'),
 
 			contentMaxWidth: 0,
+			settingValue: (_pluginId: string, _key: string) => { throw new Error('settingValue is not implemented'); },
 			...options,
 		};
 
@@ -452,10 +501,11 @@ export default class MdToHtml {
 		const cachedOutput = this.cachedOutputs_[cacheKey];
 		if (cachedOutput) return cachedOutput;
 
-		const ruleOptions = Object.assign({}, options, {
+		const ruleOptions = {
+			...options,
 			resourceBaseUrl: this.resourceBaseUrl_,
 			ResourceModel: this.ResourceModel_,
-		});
+		};
 
 		const context: PluginContext = {
 			css: {},
@@ -463,20 +513,25 @@ export default class MdToHtml {
 			cache: this.contextCache_,
 			userData: {},
 			currentLinks: [],
+			pluginWasUsed: {
+				mermaid: false,
+				katex: false,
+			},
 		};
 
-		const markdownIt = new MarkdownIt({
+		const markdownIt: MarkdownIt = new MarkdownIt({
 			breaks: !this.pluginEnabled('softbreaks'),
 			typographer: this.pluginEnabled('typographer'),
 			linkify: this.pluginEnabled('linkify'),
 			html: true,
-			highlight: (str: string, lang: string) => {
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+			highlight: (str: string, lang: string, _attrs: any): any => {
 				let outputCodeHtml = '';
 
 				// The strings includes the last \n that is part of the fence,
 				// so we remove it because we need the exact code in the source block
 				const trimmedStr = this.removeLastNewLine(str);
-				const sourceBlockHtml = `<pre class="joplin-source" data-joplin-language="${lang}" data-joplin-source-open="\`\`\`${lang}&#10;" data-joplin-source-close="&#10;\`\`\`">${markdownIt.utils.escapeHtml(trimmedStr)}</pre>`;
+				const sourceBlockHtml = `<pre class="joplin-source" data-joplin-language="${htmlentities(lang)}" data-joplin-source-open="\`\`\`${htmlentities(lang)}&#10;" data-joplin-source-close="&#10;\`\`\`">${markdownIt.utils.escapeHtml(trimmedStr)}</pre>`;
 
 				if (this.shouldSkipHighlighting(trimmedStr, lang)) {
 					outputCodeHtml = markdownIt.utils.escapeHtml(trimmedStr);
@@ -486,7 +541,7 @@ export default class MdToHtml {
 
 						const cacheKey = md5(`${str}_${lang}`);
 
-						if (options.codeHighlightCacheKey && this.cachedHighlightedCode_[cacheKey]) {
+						if (options.codeHighlightCacheKey && cacheKey in this.cachedHighlightedCode_) {
 							hlCode = this.cachedHighlightedCode_[cacheKey];
 						} else {
 							if (lang && hljs.getLanguage(lang)) {
@@ -543,25 +598,40 @@ export default class MdToHtml {
 		// Using the `context` object, a plugin can define what additional assets they need (css, fonts, etc.) using context.pluginAssets.
 		// The calling application will need to handle loading these assets.
 
-		const allRules = Object.assign({}, rules, this.extraRendererRules_);
+		const allRules = { ...rules, ...this.extraRendererRules_ };
+
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+		const loadPlugin = (plugin: any, options: any) => {
+			// Handle the case where we're bundling with webpack --
+			// some modules that are commonjs imports in nodejs
+			// act like ES6 imports.
+			if (typeof plugin !== 'function' && plugin.default) {
+				plugin = plugin.default;
+			}
+
+			markdownIt.use(plugin, options);
+		};
 
 		for (const key in allRules) {
 			if (!this.pluginEnabled(key)) continue;
 
 			const rule = allRules[key];
 
-			markdownIt.use(rule.plugin, {
+			loadPlugin(rule.plugin, {
 				context: context,
 				...ruleOptions,
 				...(ruleOptions.plugins[key] ? ruleOptions.plugins[key] : {}),
+				settingValue: (key: string) => {
+					return options.settingValue(rule.pluginId, key);
+				},
 			});
 		}
 
-		markdownIt.use(markdownItAnchor, { slugify: slugify });
+		loadPlugin(markdownItAnchor, { slugify: slugify });
 
 		for (const key in plugins) {
 			if (this.pluginEnabled(key)) {
-				markdownIt.use(plugins[key].module, plugins[key].options);
+				loadPlugin(plugins[key].module, plugins[key].options);
 			}
 		}
 
@@ -572,10 +642,18 @@ export default class MdToHtml {
 		const renderedBody = markdownIt.render(body, context);
 
 		let cssStrings = noteStyle(options.theme, {
+			scrollbarSize: options.scrollbarSize,
 			contentMaxWidth: options.contentMaxWidth,
 		});
 
-		let output = { ...this.allProcessedAssets(allRules, options.theme, options.codeTheme) };
+		let output: RenderResult = { ...this.allProcessedAssets(allRules, options.theme, options.codeTheme) };
+
+		output.pluginAssets = output.pluginAssets.filter(pa => {
+			if (!context.pluginWasUsed.mermaid && pa.source === 'mermaid') return false;
+			if (!context.pluginWasUsed.katex && pa.source === 'katex') return false;
+			return true;
+		});
+
 		cssStrings = cssStrings.concat(output.cssStrings);
 
 		if (this.customCss_) cssStrings.push(this.customCss_);

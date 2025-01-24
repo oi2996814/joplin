@@ -1,7 +1,7 @@
 import { Item, Share, ShareType, ShareUser, ShareUserStatus, User, Uuid } from '../services/database/types';
 import { ErrorBadRequest, ErrorForbidden, ErrorNotFound } from '../utils/errors';
 import BaseModel, { AclAction, DeleteOptions } from './BaseModel';
-import { getCanShareFolder } from './utils/user';
+import { getCanReceiveFolder } from './utils/user';
 
 export default class ShareUserModel extends BaseModel<ShareUser> {
 
@@ -11,9 +11,9 @@ export default class ShareUserModel extends BaseModel<ShareUser> {
 
 	public async checkIfAllowed(user: User, action: AclAction, resource: ShareUser = null): Promise<void> {
 		if (action === AclAction.Create) {
-			const recipient = await this.models().user().load(resource.user_id, { fields: ['account_type', 'can_share_folder', 'enabled'] });
+			const recipient = await this.models().user().load(resource.user_id, { fields: ['account_type', 'can_receive_folder', 'enabled'] });
 			if (!recipient.enabled) throw new ErrorForbidden('the recipient account is disabled');
-			if (!getCanShareFolder(recipient)) throw new ErrorForbidden('The sharing feature is not enabled for the recipient account');
+			if (!getCanReceiveFolder(recipient)) throw new ErrorForbidden('The sharing feature is not enabled for the recipient account');
 
 			const share = await this.models().share().load(resource.share_id);
 			if (share.owner_id !== user.id) throw new ErrorForbidden('no access to the share object');
@@ -50,7 +50,7 @@ export default class ShareUserModel extends BaseModel<ShareUser> {
 			.select(this.defaultFields)
 			.whereIn('share_id', shareIds);
 
-		if (status !== null) query.where('status', status);
+		if (status !== null) void query.where('status', status);
 
 		const rows: ShareUser[] = await query;
 
@@ -80,7 +80,7 @@ export default class ShareUserModel extends BaseModel<ShareUser> {
 		return this.db(this.tableName).where(link).first();
 	}
 
-	public async shareWithUserAndAccept(share: Share, shareeId: Uuid, masterKey: string = '') {
+	public async shareWithUserAndAccept(share: Share, shareeId: Uuid, masterKey = '') {
 		await this.models().shareUser().addById(share.id, shareeId, masterKey);
 		await this.models().shareUser().setStatus(share.id, shareeId, ShareUserStatus.Accepted);
 	}
@@ -143,6 +143,16 @@ export default class ShareUserModel extends BaseModel<ShareUser> {
 		await this.withTransaction(async () => {
 			await this.delete(shareUsers.map(s => s.id));
 		}, 'ShareUserModel::deleteByShare');
+	}
+
+	public async deleteByUserId(userId: Uuid) {
+		const shareUsers = await this.byUserId(userId);
+
+		await this.withTransaction(async () => {
+			for (const shareUser of shareUsers) {
+				await this.delete(shareUser.id);
+			}
+		}, 'UserShareModel::deleteByUserId');
 	}
 
 	public async delete(id: string | string[], _options: DeleteOptions = {}): Promise<void> {

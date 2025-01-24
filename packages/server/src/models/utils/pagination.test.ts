@@ -1,11 +1,12 @@
 import { expectThrow } from '../../utils/testing/testUtils';
 import { defaultPagination, Pagination, createPaginationLinks, requestPagination } from './pagination';
 
-describe('pagination', function() {
+describe('pagination', () => {
 
-	test('should create options from request query parameters', async function() {
+	test('should create options from request query parameters', async () => {
 		const d = defaultPagination();
 
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 		const testCases: any = [
 			[
 				null,
@@ -57,6 +58,7 @@ describe('pagination', function() {
 		];
 
 		for (const t of testCases) {
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 			const input: any = t[0];
 			const expected: Pagination = t[1];
 			const actual: Pagination = requestPagination(input);
@@ -69,7 +71,7 @@ describe('pagination', function() {
 		await expectThrow(async () => requestPagination({ page: 0 }));
 	});
 
-	test('should create page link logic', async function() {
+	test('should create page link logic', async () => {
 		expect(createPaginationLinks(1, 5)).toEqual([
 			{ page: 1, isCurrent: true },
 			{ page: 2 },

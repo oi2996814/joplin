@@ -1,10 +1,12 @@
-import { isValidOrigin, parseSubPath, splitItemPath } from './routeUtils';
+import { findMatchingRoute, isValidOrigin, parseSubPath, splitItemPath, urlMatchesSchema } from './routeUtils';
 import { ItemAddressingType } from '../services/database/types';
 import { RouteType } from './types';
+import { expectThrow } from './testing/testUtils';
 
-describe('routeUtils', function() {
+describe('routeUtils', () => {
 
-	it('should parse a route path', async function() {
+	it('should parse a route path', async () => {
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 		const testCases: any[] = [
 			['123456/content', '123456', 'content', ItemAddressingType.Id],
 			['123456', '123456', '', ItemAddressingType.Id],
@@ -26,7 +28,65 @@ describe('routeUtils', function() {
 		}
 	});
 
-	it('should split an item path', async function() {
+	it('should find a matching route', async () => {
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+		const testCases: any[] = [
+			['/admin/organizations', {
+				route: 1,
+				basePath: 'admin/organizations',
+				subPath: {
+					id: '',
+					link: '',
+					addressingType: 1,
+					raw: '',
+					schema: 'admin/organizations',
+				},
+			}],
+
+			['/api/users/123', {
+				route: 2,
+				basePath: 'api/users',
+				subPath: {
+					id: '123',
+					link: '',
+					addressingType: 1,
+					raw: '123',
+					schema: 'api/users/:id',
+				},
+			}],
+
+			['/help', {
+				route: 3,
+				basePath: 'help',
+				subPath: {
+					id: '',
+					link: '',
+					addressingType: 1,
+					raw: '',
+					schema: 'help',
+				},
+			}],
+		];
+
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+		const routes: Record<string, any> = {
+			'admin/organizations': 1,
+			'api/users': 2,
+			'help': 3,
+		};
+
+		for (const testCase of testCases) {
+			const [path, expected] = testCase;
+			const actual = findMatchingRoute(path, routes);
+			expect(actual).toEqual(expected);
+		}
+
+		await expectThrow(async () => findMatchingRoute('help', routes));
+		await expectThrow(async () => findMatchingRoute('api/users/123', routes));
+	});
+
+	it('should split an item path', async () => {
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 		const testCases: any[] = [
 			['root:/Documents/MyFile.md:', ['root', 'Documents', 'MyFile.md']],
 			['documents:/CV.doc:', ['documents', 'CV.doc']],
@@ -42,8 +102,8 @@ describe('routeUtils', function() {
 		}
 	});
 
-	it('should check the request origin for API URLs', async function() {
-		const testCases: any[] = [
+	it('should check the request origin for API URLs', async () => {
+		const testCases: [string, string, boolean][] = [
 			[
 				'https://example.com', // Request origin
 				'https://example.com', // Config base URL
@@ -84,8 +144,8 @@ describe('routeUtils', function() {
 		}
 	});
 
-	it('should check the request origin for User Content URLs', async function() {
-		const testCases: any[] = [
+	it('should check the request origin for User Content URLs', async () => {
+		const testCases: [string, string, boolean][] = [
 			[
 				'https://usercontent.local', // Request origin
 				'https://usercontent.local', // Config base URL
@@ -111,6 +171,42 @@ describe('routeUtils', function() {
 		for (const testCase of testCases) {
 			const [requestOrigin, configBaseUrl, expected] = testCase;
 			expect(isValidOrigin(requestOrigin, configBaseUrl, RouteType.UserContent)).toBe(expected);
+		}
+	});
+
+	it('should check if a URL matches a schema', async () => {
+		const testCases: [string, string, boolean][] = [
+			[
+				'https://test.com/items/123/children',
+				'items/:id/children',
+				true,
+			],
+			[
+				'https://test.com/items/123',
+				'items/:id',
+				true,
+			],
+			[
+				'https://test.com/items',
+				'items',
+				true,
+			],
+			[
+				'https://test.com/items/123/children',
+				'items/:id',
+				false,
+			],
+			[
+				'',
+				'items/:id',
+				false,
+			],
+		];
+
+		for (const testCase of testCases) {
+			const [url, schema, expected] = testCase;
+			const actual = urlMatchesSchema(url, schema);
+			expect(actual).toBe(expected);
 		}
 	});
 

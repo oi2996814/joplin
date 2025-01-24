@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en-gb">
 
 <!--
 
@@ -14,6 +14,7 @@ https://github.com/laurent22/joplin/blob/dev/{{{sourceMarkdownFile}}}
 -->
 
 	<head>
+		{{> gtmHead}}
 		{{> gaOptimize}}
 		<meta
 			charset="utf-8"
@@ -23,7 +24,8 @@ https://github.com/laurent22/joplin/blob/dev/{{{sourceMarkdownFile}}}
 		<link rel="icon" href="{{imageBaseUrl}}/favicon.png" />
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
 		<meta name="theme-color" content="#000000" />
-		<meta name="description" content="Joplin, the open source note-taking application" />
+		{{> openGraphTags}}
+		{{> rssFeedLink}}
 		<link
 			rel="stylesheet"
 			href="{{cssBaseUrl}}/bootstrap5.0.2.min.css"
@@ -38,6 +40,7 @@ https://github.com/laurent22/joplin/blob/dev/{{{sourceMarkdownFile}}}
 			onload="this.media='all'; this.onload = null"
 		/>
 		<link rel="stylesheet" href="{{{assetUrls.css.site}}}" as="style" />
+		{{#assetUrls.css.brand}}<link rel="stylesheet" href="{{{assetUrls.css.brand}}}" as="style" />{{/assetUrls.css.brand}}
 		<title>{{pageTitle}}</title>
 
 		<script
@@ -47,6 +50,8 @@ https://github.com/laurent22/joplin/blob/dev/{{{sourceMarkdownFile}}}
 		></script>
 	</head>
 	<body class="website-env-{{env}}">
+		{{> gtmBody}}
+		
 		<div class="container-fluid generic-template {{pageName}}-page" id="main-container">
 
 			{{#navbar}}
@@ -65,11 +70,6 @@ https://github.com/laurent22/joplin/blob/dev/{{{sourceMarkdownFile}}}
 							{{{contentHtml}}}
 							{{#showBottomLinks}}
 								<div class="bottom-links">
-									{{#discussOnForumLink}}
-										<a class="bottom-link" href="{{{discussOnForumLink}}}">
-											<i class="fab fa-discourse"></i></i> Discuss on the forum
-										</a>
-									{{/discussOnForumLink}}
 									{{#showImproveThisDoc}}
 										<a class="bottom-link" href="https://github.com/laurent22/joplin/blob/dev/{{{sourceMarkdownFile}}}">
 											<i class="fab fa-github"></i> Improve this doc
@@ -86,6 +86,7 @@ https://github.com/laurent22/joplin/blob/dev/{{{sourceMarkdownFile}}}
 			{{> footer}}
 		</div>
 
+		<script src="{{jsBaseUrl}}/bootstrap5.0.2.bundle.min.js" rel="preload" as="script"></script>
 		<script src="{{{assetUrls.js.script}}}"></script>
 
 		{{> analytics}}

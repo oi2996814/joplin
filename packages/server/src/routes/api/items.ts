@@ -7,10 +7,11 @@ import { AppContext } from '../../utils/types';
 import * as fs from 'fs-extra';
 import { ErrorForbidden, ErrorMethodNotAllowed, ErrorNotFound, ErrorPayloadTooLarge, errorToPlainObject } from '../../utils/errors';
 import ItemModel, { ItemSaveOption, SaveFromRawContentItem } from '../../models/ItemModel';
-import { requestDeltaPagination, requestPagination } from '../../models/utils/pagination';
+import { requestPagination } from '../../models/utils/pagination';
 import { AclAction } from '../../models/BaseModel';
 import { safeRemove } from '../../utils/fileUtils';
 import { formatBytes, MB } from '../../utils/bytes';
+import { requestDeltaPagination } from '../../models/ChangeModel';
 
 const router = new Router(RouteType.Api);
 
@@ -27,6 +28,7 @@ export async function putItemContents(path: SubPath, ctx: AppContext, isBatch: b
 
 	if (isBatch) {
 		let totalSize = 0;
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 		items = bodyFields.items.map((item: any) => {
 			totalSize += item.name.length + (item.body ? item.body.length : 0);
 			return {
@@ -37,7 +39,7 @@ export async function putItemContents(path: SubPath, ctx: AppContext, isBatch: b
 
 		if (totalSize > batchMaxSize) throw new ErrorPayloadTooLarge(`Size of items (${formatBytes(totalSize)}) is over the limit (${formatBytes(batchMaxSize)})`);
 	} else {
-		const filePath = parsedBody?.files?.file ? parsedBody.files.file.path : null;
+		const filePath = parsedBody?.files?.file ? parsedBody.files.file.filepath : null;
 
 		try {
 			const buffer = filePath ? await fs.readFile(filePath) : Buffer.alloc(0);
@@ -48,7 +50,7 @@ export async function putItemContents(path: SubPath, ctx: AppContext, isBatch: b
 			// include the "share_id" field property so it doesn't need to be set via
 			// query parameter.
 			if (ctx.query['share_id']) {
-				saveOptions.shareId = ctx.query['share_id'];
+				saveOptions.shareId = ctx.query['share_id'] as string;
 				await ctx.joplin.models.item().checkIfAllowed(ctx.joplin.owner, AclAction.Create, { jop_share_id: saveOptions.shareId });
 			}
 
@@ -83,7 +85,7 @@ export async function putItemContents(path: SubPath, ctx: AppContext, isBatch: b
 //   within that folder. Except that they cannot delete the root folder if they
 //   are not the owner, so there's a check in this case.
 
-async function itemFromPath(userId: Uuid, itemModel: ItemModel, path: SubPath, mustExists: boolean = true): Promise<Item> {
+async function itemFromPath(userId: Uuid, itemModel: ItemModel, path: SubPath, mustExists = true): Promise<Item> {
 	const name = itemModel.pathToName(path.id);
 	const item = await itemModel.loadByName(userId, name);
 	if (mustExists && !item) throw new ErrorNotFound(`Not found: ${path.id}`);

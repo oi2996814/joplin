@@ -5,16 +5,15 @@ import Tag from '../../models/Tag';
 import MasterKey from '../../models/MasterKey';
 import { setEncryptionEnabled } from '../synchronizer/syncInfoUtils';
 
-describe('Synchronizer.tags', function() {
+describe('Synchronizer.tags', () => {
 
-	beforeEach(async (done) => {
+	beforeEach(async () => {
 		await setupDatabaseAndSynchronizer(1);
 		await setupDatabaseAndSynchronizer(2);
 		await switchClient(1);
-		done();
 	});
 
-	async function shoudSyncTagTest(withEncryption: boolean) {
+	async function shouldSyncTagTest(withEncryption: boolean) {
 		let masterKey = null;
 		if (withEncryption) {
 			setEncryptionEnabled(true);
@@ -64,11 +63,11 @@ describe('Synchronizer.tags', function() {
 	}
 
 	it('should sync tags', (async () => {
-		await shoudSyncTagTest(false);
+		await shouldSyncTagTest(false);
 	}));
 
 	it('should sync encrypted tags', (async () => {
-		await shoudSyncTagTest(true);
+		await shouldSyncTagTest(true);
 	}));
 
 });

@@ -1,10 +1,10 @@
 import routeHandler from '../../middleware/routeHandler';
 import { beforeAllDb, afterAllTests, beforeEachDb, koaAppContext, createUserAndSession } from '../../utils/testing/testUtils';
 
-describe('index_home', function() {
+describe('index/home', () => {
 
 	beforeAll(async () => {
-		await beforeAllDb('index_home');
+		await beforeAllDb('index/home');
 	});
 
 	afterAll(async () => {
@@ -15,7 +15,7 @@ describe('index_home', function() {
 		await beforeEachDb();
 	});
 
-	test('should show the home page', async function() {
+	test('should show the home page', async () => {
 		const { user, session } = await createUserAndSession();
 
 		const context = await koaAppContext({
@@ -28,7 +28,8 @@ describe('index_home', function() {
 
 		await routeHandler(context);
 
-		expect(context.response.body.indexOf(user.email) >= 0).toBe(true);
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+		expect((context.response.body as any).indexOf(user.email) >= 0).toBe(true);
 	});
 
 });
