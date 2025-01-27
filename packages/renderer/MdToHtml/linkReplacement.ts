@@ -1,4 +1,7 @@
-import utils, { ItemIdToUrlHandler } from '../utils';
+import { LinkRenderingType } from '../MdToHtml';
+import { ItemIdToUrlHandler, OptionsResourceModel, ResourceInfos } from '../types';
+import * as utils from '../utils';
+import createEventHandlingAttrs from './createEventHandlingAttrs';
 const Entities = require('html-entities').AllHtmlEntities;
 const htmlentities = new Entities().encode;
 const urlUtils = require('../urlUtils.js');
@@ -6,9 +9,9 @@ const { getClassNameForMimeType } = require('font-awesome-filetypes');
 
 export interface Options {
 	title?: string;
-	resources?: any;
-	ResourceModel?: any;
-	linkRenderingType?: number;
+	resources?: ResourceInfos;
+	ResourceModel?: OptionsResourceModel;
+	linkRenderingType?: LinkRenderingType;
 	plainResourceRendering?: boolean;
 	postMessageSyntax?: string;
 	enableLongPress?: boolean;
@@ -17,22 +20,21 @@ export interface Options {
 
 export interface LinkReplacementResult {
 	html: string;
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	resource: any;
 	resourceReady: boolean;
 	resourceFullPath: string;
 }
 
 export default function(href: string, options: Options = null): LinkReplacementResult {
-	options = {
-		title: '',
-		resources: {},
-		ResourceModel: null,
-		linkRenderingType: 1,
-		plainResourceRendering: false,
-		postMessageSyntax: 'postMessage',
-		enableLongPress: false,
-		...options,
-	};
+	options = { ...options };
+	options.title ??= '';
+	options.resources ??= {};
+	options.ResourceModel ??= null;
+	options.linkRenderingType ??= LinkRenderingType.JavaScriptHandler;
+	options.plainResourceRendering ??= false;
+	options.postMessageSyntax ??= 'postMessage';
+	options.enableLongPress ??= false;
 
 	const resourceHrefInfo = urlUtils.parseResourceUrl(href);
 	const isResourceUrl = options.resources && !!resourceHrefInfo;
@@ -93,15 +95,13 @@ export default function(href: string, options: Options = null): LinkReplacementR
 	let js = `${options.postMessageSyntax}(${JSON.stringify(href)}, { resourceId: ${JSON.stringify(resourceId)} }); return false;`;
 	if (options.enableLongPress && !!resourceId) {
 		const onClick = `${options.postMessageSyntax}(${JSON.stringify(href)})`;
-		const onLongClick = `${options.postMessageSyntax}("longclick:${resourceId}")`;
-		// if t is set when ontouchstart is called it means the user has already touched the screen once and this is the 2nd touch
-		// in this case we assume the user is trying to zoom and we don't want to show the menu
-		const touchStart = `if (typeof(t) !== "undefined" && !!t) { clearTimeout(t); t = null; } else { t = setTimeout(() => { t = null; ${onLongClick}; }, ${utils.longPressDelay}); }`;
-		const cancel = 'if (!!t) {clearTimeout(t); t=null;';
-		const touchEnd = `${cancel} ${onClick};}`;
-		js = `ontouchstart='${touchStart}' ontouchend='${touchEnd}' ontouchcancel='${cancel} ontouchmove="${cancel}'`;
+		js = createEventHandlingAttrs(resourceId, {
+			enableLongPress: options.enableLongPress ?? false,
+			postMessageSyntax: options.postMessageSyntax ?? 'void',
+			enableEditPopup: false,
+		}, onClick);
 	} else {
-		js = `onclick='${js}'`;
+		js = `onclick='${htmlentities(js)}'`;
 	}
 
 	if (hrefAttr.indexOf('#') === 0 && href.indexOf('#') === 0) js = ''; // If it's an internal anchor, don't add any JS since the webview is going to handle navigating to the right place
@@ -114,16 +114,28 @@ export default function(href: string, options: Options = null): LinkReplacementR
 
 	let resourceFullPath = resource && options?.ResourceModel?.fullPath ? options.ResourceModel.fullPath(resource) : null;
 
+	// Handle overrides
+	let addedHrefAttr = false;
 	if (resourceId && options.itemIdToUrl) {
 		const url = options.itemIdToUrl(resourceId);
-		attrHtml.push(`href='${htmlentities(url)}'`);
-		resourceFullPath = url;
-	} else if (options.plainResourceRendering || options.linkRenderingType === 2) {
+		if (url !== null) {
+			attrHtml.push(`href='${htmlentities(url)}'`);
+			resourceFullPath = url;
+			addedHrefAttr = true;
+		}
+	}
+
+	if (addedHrefAttr) {
+		// Done -- the HREF has already bee set.
+	} else if (options.plainResourceRendering || options.linkRenderingType === LinkRenderingType.HrefHandler) {
 		icon = '';
 		attrHtml.push(`href='${htmlentities(href)}'`);
 	} else {
 		attrHtml.push(`href='${htmlentities(hrefAttr)}'`);
-		if (js) attrHtml.push(js);
+	}
+
+	if (js && options.linkRenderingType === LinkRenderingType.JavaScriptHandler) {
+		attrHtml.push(js);
 	}
 
 	return {

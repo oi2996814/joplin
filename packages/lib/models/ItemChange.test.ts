@@ -1,5 +1,5 @@
 import { revisionService, setupDatabaseAndSynchronizer, db, switchClient, msleep } from '../testing/test-utils';
-import SearchEngine from '../services/searchengine/SearchEngine';
+import SearchEngine from '../services/search/SearchEngine';
 import ResourceService from '../services/ResourceService';
 import ItemChangeUtils from '../services/ItemChangeUtils';
 import Note from '../models/Note';
@@ -7,14 +7,13 @@ import ItemChange from '../models/ItemChange';
 
 let searchEngine: SearchEngine = null;
 
-describe('models/ItemChange', function() {
+describe('models/ItemChange', () => {
 
-	beforeEach(async (done) => {
+	beforeEach(async () => {
 		await setupDatabaseAndSynchronizer(1);
 		await switchClient(1);
 		searchEngine = new SearchEngine();
 		searchEngine.setDb(db());
-		done();
 	});
 
 	it('should delete old changes that have been processed', (async () => {

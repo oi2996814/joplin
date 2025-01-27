@@ -63,13 +63,15 @@ class AppComponent extends Component {
 			contentScriptLoaded: false,
 			selectedTags: [],
 			contentScriptError: '',
+			newNoteId: null,
 		});
 
-		this.confirm_click = () => {
-			const content = Object.assign({}, this.props.clippedContent);
+		this.confirm_click = async () => {
+			const content = { ...this.props.clippedContent };
 			content.tags = this.state.selectedTags.join(',');
 			content.parent_id = this.props.selectedFolderId;
-			bridge().sendContentToJoplin(content);
+			const response = await bridge().sendContentToJoplin(content);
+			this.setState({ newNoteId: response.id });
 		};
 
 		this.contentTitle_change = (event) => {
@@ -113,6 +115,13 @@ class AppComponent extends Component {
 
 		this.clipScreenshot_click = async () => {
 			try {
+				// Firefox requires the <all_urls> host permission to take a
+				// screenshot of the current page, however, this may change
+				// in the future. Note that Firefox also forces this permission
+				// to be optional.
+				// See https://discourse.mozilla.org/t/browser-tabs-capturevisibletab-not-working-in-firefox-for-mv3/122965/3
+				await bridge().browser().permissions.request({ origins: ['<all_urls>'] });
+
 				const baseUrl = await bridge().clipperServerBaseUrl();
 
 				await bridge().sendCommandToActiveTab({
@@ -130,7 +139,7 @@ class AppComponent extends Component {
 		};
 
 		this.clipperServerHelpLink_click = () => {
-			bridge().tabsCreate({ url: 'https://joplinapp.org/clipper/' });
+			bridge().tabsCreate({ url: 'https://joplinapp.org/help/apps/clipper' });
 		};
 
 		this.folderSelect_change = (event) => {
@@ -177,10 +186,14 @@ class AppComponent extends Component {
 	}
 
 	async loadContentScripts() {
-		await bridge().tabsExecuteScript({ file: '/content_scripts/JSDOMParser.js' });
-		await bridge().tabsExecuteScript({ file: '/content_scripts/Readability.js' });
-		await bridge().tabsExecuteScript({ file: '/content_scripts/Readability-readerable.js' });
-		await bridge().tabsExecuteScript({ file: '/content_scripts/index.js' });
+		await bridge().tabsExecuteScript([
+			'/content_scripts/setUpEnvironment.js',
+			'/content_scripts/JSDOMParser.js',
+			'/content_scripts/Readability.js',
+			'/content_scripts/Readability-readerable.js',
+			'/content_scripts/clipperUtils.js',
+			'/content_scripts/index.js',
+		]);
 	}
 
 	async componentDidMount() {
@@ -230,6 +243,7 @@ class AppComponent extends Component {
 				if (!ref) break;
 				lastRef = ref;
 			}
+			// eslint-disable-next-line no-restricted-properties
 			if (lastRef) lastRef.focus();
 		}
 	}
@@ -402,6 +416,24 @@ class AppComponent extends Component {
 			);
 		};
 
+		const openNewNoteButton = () => {
+
+			if (!this.state.newNoteId) { return null; } else {
+				return (
+					// The jopin:// link must be opened in a new tab. When it's opened for the first time, a system dialog will ask for the user's permission.
+					// The system dialog is too big to fit into the popup so the user will not be able to see the dialog buttons and get stuck.
+					<a
+						className="Button"
+						href={`joplin://x-callback-url/openNote?id=${encodeURIComponent(this.state.newNoteId)}`}
+						target="_blank"
+						onClick={() => this.setState({ newNoteId: null })}
+					>
+          Open newly created note
+					</a>
+				);
+			}
+		};
+
 		const tagDataListOptions = [];
 		for (let i = 0; i < this.props.tags.length; i++) {
 			const tag = this.props.tags[i];
@@ -437,6 +469,7 @@ class AppComponent extends Component {
 				</div>
 				{ warningComponent }
 				{ previewComponent }
+				{ openNewNoteButton() }
 				{ clipperStatusComp() }
 			</div>
 		);

@@ -1,11 +1,13 @@
 import * as React from 'react';
-import { useCallback, useMemo } from 'react';
+import { useCallback, useId, useMemo } from 'react';
 import { _ } from '@joplin/lib/locale';
 import styled from 'styled-components';
 import ToggleButton from '../../../lib/ToggleButton/ToggleButton';
 import Button, { ButtonLevel } from '../../../Button/Button';
 import { PluginManifest } from '@joplin/lib/services/plugins/utils/types';
 import bridge from '../../../../services/bridge';
+import { ItemEvent, PluginItem } from '@joplin/lib/components/shared/config/plugins/types';
+import PluginService from '@joplin/lib/services/plugins/PluginService';
 
 export enum InstallState {
 	NotInstalled = 1,
@@ -18,10 +20,6 @@ export enum UpdateState {
 	CanUpdate = 2,
 	Updating = 3,
 	HasBeenUpdated = 4,
-}
-
-export interface ItemEvent {
-	item: PluginItem;
 }
 
 interface Props {
@@ -40,27 +38,21 @@ interface Props {
 function manifestToItem(manifest: PluginManifest): PluginItem {
 	return {
 		manifest: manifest,
+		installed: true,
 		enabled: true,
 		deleted: false,
 		devMode: false,
+		builtIn: false,
 		hasBeenUpdated: false,
 	};
 }
 
-export interface PluginItem {
-	manifest: PluginManifest;
-	enabled: boolean;
-	deleted: boolean;
-	devMode: boolean;
-	hasBeenUpdated: boolean;
-}
-
-const CellRoot = styled.div<{isCompatible: boolean}>`
+const CellRoot = styled.div<{ isCompatible: boolean }>`
 	display: flex;
 	box-sizing: border-box;
 	background-color: ${props => props.theme.backgroundColor};
 	flex-direction: column;
-	align-items: flex-start;
+	align-items: stretch;
 	padding: 15px;
 	border: 1px solid ${props => props.theme.dividerColor};
 	border-radius: 6px;
@@ -96,15 +88,19 @@ const NeedUpgradeMessage = styled.span`
 	font-size: ${props => props.theme.fontSize}px;
 `;
 
-const DevModeLabel = styled.div`
+const BoxedLabel = styled.div`
 	border: 1px solid ${props => props.theme.color};
 	border-radius: 4px;
 	padding: 4px 6px;
 	font-size: ${props => props.theme.fontSize * 0.75}px;
 	color: ${props => props.theme.color};
+	flex-grow: 0;
+	height: min-content;
+	margin-top: auto;
 `;
 
-const StyledNameAndVersion = styled.div<{mb: any}>`
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+const StyledNameAndVersion = styled.div<{ mb: any }>`
 	font-family: ${props => props.theme.fontFamily};
 	color: ${props => props.theme.color};
 	font-size: ${props => props.theme.fontSize}px;
@@ -155,11 +151,11 @@ export default function(props: Props) {
 	const onNameClick = useCallback(() => {
 		const manifest = item.manifest;
 		if (!manifest.homepage_url) return;
-		bridge().openExternal(manifest.homepage_url);
+		void bridge().openExternal(manifest.homepage_url);
 	}, [item]);
 
 	const onRecommendedClick = useCallback(() => {
-		bridge().openExternal('https://github.com/joplin/plugins/blob/master/readme/recommended.md#recommended-plugins');
+		void bridge().openExternal('https://github.com/joplin/plugins/blob/master/readme/recommended.md#recommended-plugins');
 	}, []);
 
 	// For plugins in dev mode things like enabling/disabling or
@@ -170,18 +166,22 @@ export default function(props: Props) {
 		if (!props.onToggle) return null;
 
 		if (item.devMode) {
-			return <DevModeLabel>DEV</DevModeLabel>;
+			return <BoxedLabel>DEV</BoxedLabel>;
 		}
 
 		return <ToggleButton
 			themeId={props.themeId}
 			value={item.enabled}
 			onToggle={() => props.onToggle({ item })}
+			aria-label={_('Enabled')}
 		/>;
 	}
 
 	function renderDeleteButton() {
+		// Built-in plugins can only be disabled
+		if (item.builtIn) return null;
 		if (!props.onDelete) return null;
+
 		return <Button level={ButtonLevel.Secondary} onClick={() => props.onDelete({ item })} title={_('Delete')}/>;
 	}
 
@@ -217,6 +217,16 @@ export default function(props: Props) {
 		/>;
 	}
 
+	const renderDefaultPluginLabel = () => {
+		if (item.builtIn) {
+			return (
+				<BoxedLabel>{_('Built-in')}</BoxedLabel>
+			);
+		}
+
+		return null;
+	};
+
 	function renderFooter() {
 		if (item.devMode) return null;
 
@@ -224,7 +234,7 @@ export default function(props: Props) {
 			return (
 				<CellFooter>
 					<NeedUpgradeMessage>
-						{_('Please upgrade Joplin to use this plugin')}
+						{PluginService.instance().describeIncompatibility(item.manifest)}
 					</NeedUpgradeMessage>
 				</CellFooter>
 			);
@@ -236,6 +246,7 @@ export default function(props: Props) {
 				{renderInstallButton()}
 				{renderUpdateButton()}
 				<div style={{ display: 'flex', flex: 1 }}/>
+				{renderDefaultPluginLabel()}
 			</CellFooter>
 		);
 	}
@@ -246,10 +257,17 @@ export default function(props: Props) {
 		return <RecommendedBadge href="#" title={_('The Joplin team has vetted this plugin and it meets our standards for security and performance.')} onClick={onRecommendedClick}><i className="fas fa-crown"></i></RecommendedBadge>;
 	}
 
+	const nameLabelId = useId();
+
 	return (
-		<CellRoot isCompatible={props.isCompatible}>
+		<CellRoot isCompatible={props.isCompatible} role='group' aria-labelledby={nameLabelId}>
 			<CellTop>
-				<StyledNameAndVersion mb={'5px'}><StyledName onClick={onNameClick} href="#" style={{ marginRight: 5 }}>{item.manifest.name} {item.deleted ? _('(%s)', 'Deleted') : ''}</StyledName><StyledVersion>v{item.manifest.version}</StyledVersion></StyledNameAndVersion>
+				<StyledNameAndVersion mb={'5px'}>
+					<StyledName onClick={onNameClick} href="#" style={{ marginRight: 5 }} id={nameLabelId}>
+						{item.manifest.name} {item.deleted ? _('(%s)', 'Deleted') : ''}
+					</StyledName>
+					<StyledVersion>v{item.manifest.version}</StyledVersion>
+				</StyledNameAndVersion>
 				{renderToggleButton()}
 				{renderRecommendedBadge()}
 			</CellTop>

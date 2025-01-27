@@ -1,6 +1,5 @@
 import { ErrorBadRequest } from '../../utils/errors';
 import { decodeBase64, encodeBase64 } from '../../utils/base64';
-import { ChangePagination as DeltaPagination, defaultDeltaPagination } from '../ChangeModel';
 import { Knex } from 'knex';
 
 export enum PaginationOrderDir {
@@ -28,8 +27,8 @@ export interface PaginationQueryParams {
 	cursor?: string;
 }
 
-export interface PaginatedResults {
-	items: any[];
+export interface PaginatedResults<T> {
+	items: T[];
 	has_more: boolean;
 	cursor?: string;
 	page_count?: number;
@@ -56,6 +55,7 @@ function dbOffset(pagination: Pagination): number {
 	return pagination.limit * (pagination.page - 1);
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 export function requestPaginationOrder(query: any, defaultOrderField: string = null, defaultOrderDir: PaginationOrderDir = null): PaginationOrder[] {
 	if (defaultOrderField === null) defaultOrderField = defaultOrderField_;
 	if (defaultOrderDir === null) defaultOrderDir = defaultOrderDir_;
@@ -93,6 +93,7 @@ function processCursor(pagination: Pagination): Pagination {
 	return pagination as Pagination;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 export function requestPagination(query: any): Pagination {
 	if (!query) return defaultPagination();
 
@@ -105,15 +106,6 @@ export function requestPagination(query: any): Pagination {
 	const page: number = 'page' in query ? query.page : 1;
 
 	return validatePagination({ limit, order, page });
-}
-
-export function requestDeltaPagination(query: any): DeltaPagination {
-	if (!query) return defaultDeltaPagination();
-
-	const output: DeltaPagination = {};
-	if ('limit' in query) output.limit = query.limit;
-	if ('cursor' in query) output.cursor = query.cursor;
-	return output;
 }
 
 export function paginationToQueryParams(pagination: Pagination): PaginationQueryParams {
@@ -151,7 +143,10 @@ export interface PageLink {
 	url?: string;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 export function filterPaginationQueryParams(query: any): PaginationQueryParams {
+	if (!query) return {};
+
 	const baseUrlQuery: PaginationQueryParams = {};
 	if (query.limit) baseUrlQuery.limit = query.limit;
 	if (query.order_by) baseUrlQuery.order_by = query.order_by;
@@ -176,7 +171,7 @@ export function createPaginationLinks(page: number, pageCount: number, urlTempla
 		firstPages.push({ page: p });
 	}
 
-	if (firstPages.length && (output[0].page - firstPages[firstPages.length - 1].page) > 1) {
+	if (firstPages.length && output.length && (output[0].page - firstPages[firstPages.length - 1].page) > 1) {
 		firstPages.push({ isEllipsis: true });
 	}
 
@@ -221,9 +216,17 @@ export function createPaginationLinks(page: number, pageCount: number, urlTempla
 // 	return output;
 // }
 
-export async function paginateDbQuery(query: Knex.QueryBuilder, pagination: Pagination, mainTable: string = ''): Promise<PaginatedResults> {
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+export async function paginateDbQuery(query: Knex.QueryBuilder, pagination: Pagination, mainTable = ''): Promise<PaginatedResults<any>> {
+	pagination = {
+		...defaultPagination(),
+		...pagination,
+	};
+
 	pagination = processCursor(pagination);
 
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	const orderSql: any[] = pagination.order.map(o => {
 		return {
 			column: (mainTable ? `${mainTable}.` : '') + o.by,

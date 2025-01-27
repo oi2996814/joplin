@@ -6,7 +6,8 @@ import Note from '../../models/Note';
 import * as fs from 'fs-extra';
 import { tempFilePath } from '../../testing/test-utils';
 import { ContentScriptType } from '../../services/plugins/api/types';
-import { FileSystemItem } from './types';
+import { ExportModuleOutputFormat, FileSystemItem } from './types';
+import { readFile } from 'fs/promises';
 
 async function recreateExportDir() {
 	const dir = exportDir();
@@ -14,13 +15,12 @@ async function recreateExportDir() {
 	await fs.mkdirp(dir);
 }
 
-describe('interop/InteropService_Exporter_Html', function() {
+describe('interop/InteropService_Exporter_Html', () => {
 
-	beforeEach(async (done) => {
+	beforeEach(async () => {
 		await setupDatabaseAndSynchronizer(1);
 		await switchClient(1);
 		await recreateExportDir();
-		done();
 	});
 
 	test('should export HTML file', (async () => {
@@ -31,7 +31,7 @@ describe('interop/InteropService_Exporter_Html', function() {
 
 		await service.export({
 			path: filePath,
-			format: 'html',
+			format: ExportModuleOutputFormat.Html,
 			packIntoSingleFile: false,
 		});
 
@@ -49,7 +49,7 @@ describe('interop/InteropService_Exporter_Html', function() {
 		const dir = exportDir();
 		await service.export({
 			path: dir,
-			format: 'html',
+			format: ExportModuleOutputFormat.Html,
 			target: FileSystemItem.Directory,
 		});
 
@@ -106,7 +106,7 @@ describe('interop/InteropService_Exporter_Html', function() {
 
 		await service.export({
 			path: filePath,
-			format: 'html',
+			format: ExportModuleOutputFormat.Html,
 			packIntoSingleFile: false,
 			plugins,
 		});
@@ -119,6 +119,24 @@ describe('interop/InteropService_Exporter_Html', function() {
 
 		const readFenceContent = await fs.readFile(`${exportDir()}/${fenceRelativePath}`, 'utf8');
 		expect(readFenceContent).toBe(fenceContent);
+	}));
+
+	test('should not throw an error on invalid resource paths', (async () => {
+		const service = InteropService.instance();
+		const folder1 = await Folder.save({ title: 'folder1' });
+		await Note.save({ title: 'note1', parent_id: folder1.id, body: '[a link starts with slash](/)' });
+
+		const filePath = `${exportDir()}/test.html`;
+
+		await service.export({
+			path: filePath,
+			format: ExportModuleOutputFormat.Html,
+			packIntoSingleFile: true,
+			target: FileSystemItem.File,
+		});
+
+		const content = await readFile(filePath, 'utf-8');
+		expect(content).toContain('<a data-from-md="" title="/" href="" download="">a link starts with slash</a>');
 	}));
 
 });

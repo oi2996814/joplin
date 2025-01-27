@@ -1,18 +1,21 @@
 import Setting from '../../models/Setting';
 import { allNotesFolders, remoteNotesAndFolders, localNotesFoldersSameAsRemote } from '../../testing/test-utils-synchronizer';
-import { syncTargetName, afterAllCleanUp, synchronizerStart, setupDatabaseAndSynchronizer, synchronizer, sleep, switchClient, syncTargetId, fileApi } from '../../testing/test-utils';
+import { syncTargetName, afterAllCleanUp, synchronizerStart, setupDatabaseAndSynchronizer, synchronizer, sleep, switchClient, syncTargetId, fileApi, expectThrow } from '../../testing/test-utils';
 import Folder from '../../models/Folder';
 import Note from '../../models/Note';
 import BaseItem from '../../models/BaseItem';
-const WelcomeUtils = require('../../WelcomeUtils');
+import WelcomeUtils from '../../WelcomeUtils';
+import { NoteEntity } from '../database/types';
+import { fetchSyncInfo, setAppMinVersion, uploadSyncInfo } from './syncInfoUtils';
+import { ErrorCode } from '../../errors';
 
-describe('Synchronizer.basics', function() {
+describe('Synchronizer.basics', () => {
 
-	beforeEach(async (done) => {
+	beforeEach(async () => {
 		await setupDatabaseAndSynchronizer(1);
 		await setupDatabaseAndSynchronizer(2);
 		await switchClient(1);
-		done();
+		synchronizer().testingHooks_ = [];
 	});
 
 	afterAll(async () => {
@@ -261,6 +264,25 @@ describe('Synchronizer.basics', function() {
 		expect(disabledItems.length).toBe(1);
 	}));
 
+	it('should handle items that are read-only on the sync target', (async () => {
+		const folder = await Folder.save({ title: 'folder' });
+		const note = await Note.save({ title: 'un', is_todo: 1, parent_id: folder.id });
+		const noteId = note.id;
+		await synchronizerStart();
+		await Note.save({ id: noteId, title: 'un mod' });
+		synchronizer().testingHooks_ = ['itemIsReadOnly'];
+		await synchronizerStart();
+		synchronizer().testingHooks_ = [];
+
+		const noteReload = await Note.load(note.id);
+		expect(noteReload.title).toBe(note.title);
+
+		const conflictNote: NoteEntity = (await Note.all()).find((n: NoteEntity) => !!n.is_conflict);
+		expect(conflictNote).toBeTruthy();
+		expect(conflictNote.title).toBe('un mod');
+		expect(conflictNote.id).not.toBe(note.id);
+	}));
+
 	it('should allow duplicate folder titles', (async () => {
 		await Folder.save({ title: 'folder' });
 
@@ -277,7 +299,7 @@ describe('Synchronizer.basics', function() {
 
 		const localF2 = await Folder.load(remoteF2.id);
 
-		expect(localF2.title == remoteF2.title).toBe(true);
+		expect(localF2.title === remoteF2.title).toBe(true);
 
 		// Then that folder that has been renamed locally should be set in such a way
 		// that synchronizing it applies the title change remotely, and that new title
@@ -292,7 +314,7 @@ describe('Synchronizer.basics', function() {
 
 		remoteF2 = await Folder.load(remoteF2.id);
 
-		expect(remoteF2.title == localF2.title).toBe(true);
+		expect(remoteF2.title === localF2.title).toBe(true);
 	}));
 
 	it('should create remote items with UTF-8 content', (async () => {
@@ -333,12 +355,12 @@ describe('Synchronizer.basics', function() {
 	it('should create a new Welcome notebook on each client', (async () => {
 		// Create the Welcome items on two separate clients
 
-		await WelcomeUtils.createWelcomeItems();
+		await WelcomeUtils.createWelcomeItems('en_GB');
 		await synchronizerStart();
 
 		await switchClient(2);
 
-		await WelcomeUtils.createWelcomeItems();
+		await WelcomeUtils.createWelcomeItems('en_GB');
 		const beforeFolderCount = (await Folder.all()).length;
 		const beforeNoteCount = (await Note.all()).length;
 		expect(beforeFolderCount === 1).toBe(true);
@@ -437,6 +459,42 @@ describe('Synchronizer.basics', function() {
 		// Check that the client didn't delete the note
 		const remotes = (await fileApi().list()).items;
 		expect(remotes.find(r => r.path === `${note.id}.md`)).toBeTruthy();
+	}));
+
+	it('should throw an error if the app version is not compatible with the sync target info', (async () => {
+		await synchronizerStart();
+
+		const remoteInfo = await fetchSyncInfo(synchronizer().api());
+
+		remoteInfo.appMinVersion = '100.0.0';
+		await uploadSyncInfo(synchronizer().api(), remoteInfo);
+
+		await expectThrow(async () => synchronizerStart(1, {
+			throwOnError: true,
+		}), ErrorCode.MustUpgradeApp);
+	}));
+
+	it('should update the remote appMinVersion when synchronising', (async () => {
+		await synchronizerStart();
+
+		const remoteInfoBefore = await fetchSyncInfo(synchronizer().api());
+
+		// Simulates upgrading the client
+		setAppMinVersion('100.0.0');
+		await synchronizerStart();
+
+		// Then after sync, appMinVersion should be the same as that client version
+		const remoteInfoAfter = await fetchSyncInfo(synchronizer().api());
+
+		expect(remoteInfoBefore.appMinVersion).toBe('3.0.0');
+		expect(remoteInfoAfter.appMinVersion).toBe('100.0.0');
+
+		// Now simulates synchronising with an older client version. In that case, it should not be
+		// allowed and the remote info.json should not change.
+		setAppMinVersion('80.0.0');
+		await expectThrow(async () => synchronizerStart(1, { throwOnError: true }), ErrorCode.MustUpgradeApp);
+
+		expect((await fetchSyncInfo(synchronizer().api())).appMinVersion).toBe('100.0.0');
 	}));
 
 });

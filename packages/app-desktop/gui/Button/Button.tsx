@@ -2,6 +2,9 @@ import * as React from 'react';
 const styled = require('styled-components').default;
 const { space } = require('styled-system');
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied;
+type StyleProps = any;
+
 export enum ButtonLevel {
 	Primary = 'primary',
 	Secondary = 'secondary',
@@ -15,17 +18,17 @@ export enum ButtonSize {
 	Normal = 2,
 }
 
-interface Props {
+type ReactButtonProps = React.DetailedHTMLProps<React.HTMLAttributes<HTMLButtonElement>, HTMLButtonElement>;
+interface Props extends Omit<ReactButtonProps, 'onClick'> {
 	title?: string;
 	iconName?: string;
 	level?: ButtonLevel;
-	className?: string;
-	onClick?: Function;
+	iconLabel?: string;
+	onClick?: ()=> void;
 	color?: string;
 	iconAnimation?: string;
 	tooltip?: string;
 	disabled?: boolean;
-	style?: any;
 	size?: ButtonSize;
 	isSquare?: boolean;
 	iconOnly?: boolean;
@@ -36,12 +39,11 @@ const StyledTitle = styled.span`
 
 `;
 
-// const buttonSizePx = 32;
-
-export const buttonSizePx = (props: Props) => {
-	if (!props.size || props.size === ButtonSize.Normal) return 32;
-	if (props.size === ButtonSize.Small) return 26;
-	throw new Error(`Unknown size: ${props.size}`);
+export const buttonSizePx = (props: Props | ButtonSize) => {
+	const buttonSize = typeof props === 'number' ? props : props.size;
+	if (!buttonSize || buttonSize === ButtonSize.Normal) return 32;
+	if (buttonSize === ButtonSize.Small) return 26;
+	throw new Error(`Unknown size: ${buttonSize}`);
 };
 
 const isSquare = (props: Props) => {
@@ -71,131 +73,131 @@ const StyledButtonBase = styled.button`
 `;
 
 const StyledIcon = styled(styled.span(space))`
-	font-size: ${(props: any) => props.theme.toolbarIconSize}px;
-	${(props: any) => props.animation ? `animation: ${props.animation}` : ''};
+	font-size: ${(props: StyleProps) => props.theme.toolbarIconSize}px;
+	${(props: StyleProps) => props.animation ? `animation: ${props.animation}` : ''};
 `;
 
 const StyledButtonPrimary = styled(StyledButtonBase)`
 	border: none;
-	background-color: ${(props: any) => props.theme.backgroundColor5};
+	background-color: ${(props: StyleProps) => props.theme.backgroundColor5};
 
-	${(props: any) => props.disabled} {
+	${(props: StyleProps) => props.disabled} {
 		&:hover {
-			background-color: ${(props: any) => props.theme.backgroundColorHover5};
+			background-color: ${(props: StyleProps) => props.theme.backgroundColorHover5};
 		}
 
 		&:active {
-			background-color: ${(props: any) => props.theme.backgroundColorActive5};
+			background-color: ${(props: StyleProps) => props.theme.backgroundColorActive5};
 		}
 	}
 
 	${StyledIcon} {
-		color: ${(props: any) => props.theme.color5};
+		color: ${(props: StyleProps) => props.theme.color5};
 	}
 
 	${StyledTitle} {
-		color: ${(props: any) => props.theme.color5};
+		color: ${(props: StyleProps) => props.theme.color5};
 	}
 `;
 
 const StyledButtonSecondary = styled(StyledButtonBase)`
-	border: 1px solid ${(props: any) => props.theme.borderColor4};
-	background-color: ${(props: any) => props.theme.backgroundColor4};
+	border: 1px solid ${(props: StyleProps) => props.theme.borderColor4};
+	background-color: ${(props: StyleProps) => props.theme.backgroundColor4};
 
-	${(props: any) => props.disabled} {
+	${(props: StyleProps) => props.disabled} {
 		&:hover {
-			background-color: ${(props: any) => props.theme.backgroundColorHover4};
+			background-color: ${(props: StyleProps) => props.theme.backgroundColorHover4};
 		}
 
 		&:active {
-			background-color: ${(props: any) => props.theme.backgroundColorActive4};
+			background-color: ${(props: StyleProps) => props.theme.backgroundColorActive4};
 		}
 	}
 
 	${StyledIcon} {
-		color: ${(props: any) => props.theme.color4};
+		color: ${(props: StyleProps) => props.theme.color4};
 	}
 
 	${StyledTitle} {
-		color: ${(props: any) => props.theme.color4};
+		color: ${(props: StyleProps) => props.theme.color4};
 	}
 `;
 
 const StyledButtonTertiary = styled(StyledButtonBase)`
-	border: 1px solid ${(props: any) => props.theme.color3};
-	background-color: ${(props: any) => props.theme.backgroundColor3};
+	border: 1px solid ${(props: StyleProps) => props.theme.color3};
+	background-color: ${(props: StyleProps) => props.theme.backgroundColor3};
 
 	&:hover {
-		background-color: ${(props: any) => props.theme.backgroundColorHoverDim3};
+		background-color: ${(props: StyleProps) => props.theme.backgroundColorHoverDim3};
 	}
 
 	&:active {
-		background-color: ${(props: any) => props.theme.backgroundColorActive3};
+		background-color: ${(props: StyleProps) => props.theme.backgroundColorActive3};
 	}
 
 	${StyledIcon} {
-		color: ${(props: any) => props.theme.color};
+		color: ${(props: StyleProps) => props.theme.color};
 	}
 
 	${StyledTitle} {
-		color: ${(props: any) => props.theme.color};
+		color: ${(props: StyleProps) => props.theme.color};
 		opacity: 0.9;
 	}
 `;
 
 const StyledButtonRecommended = styled(StyledButtonBase)`
-	border: 1px solid ${(props: any) => props.theme.borderColor4};
-	background-color: ${(props: any) => props.theme.warningBackgroundColor};
+	border: 1px solid ${(props: StyleProps) => props.theme.borderColor4};
+	background-color: ${(props: StyleProps) => props.theme.warningBackgroundColor};
 
 	${StyledIcon} {
-		color: ${(props: any) => props.theme.color};
+		color: ${(props: StyleProps) => props.theme.color};
 	}
 
 	${StyledTitle} {
-		color: ${(props: any) => props.theme.color};
+		color: ${(props: StyleProps) => props.theme.color};
 		opacity: 0.9;
 	}
 `;
 
 const StyledButtonSidebarSecondary = styled(StyledButtonBase)`
 	background: none;
-	border-color: ${(props: any) => props.theme.color2};
-	color: ${(props: any) => props.theme.color2};
+	border-color: ${(props: StyleProps) => props.theme.color2};
+	color: ${(props: StyleProps) => props.theme.color2};
 
 	&:hover {
-		color: ${(props: any) => props.theme.colorHover2};
-		border-color: ${(props: any) => props.theme.colorHover2};
+		color: ${(props: StyleProps) => props.theme.colorHover2};
+		border-color: ${(props: StyleProps) => props.theme.colorHover2};
 		background: none;
 
 		${StyledTitle} {
-			color: ${(props: any) => props.theme.colorHover2};
+			color: ${(props: StyleProps) => props.theme.colorHover2};
 		}
 
 		${StyledIcon} {
-			color: ${(props: any) => props.theme.colorHover2};
+			color: ${(props: StyleProps) => props.theme.colorHover2};
 		}
 	}
 
 	&:active {
-		color: ${(props: any) => props.theme.colorActive2};
-		border-color: ${(props: any) => props.theme.colorActive2};
+		color: ${(props: StyleProps) => props.theme.colorActive2};
+		border-color: ${(props: StyleProps) => props.theme.colorActive2};
 		background: none;
 
 		${StyledTitle} {
-			color: ${(props: any) => props.theme.colorActive2};
+			color: ${(props: StyleProps) => props.theme.colorActive2};
 		}
 
 		${StyledIcon} {
-			color: ${(props: any) => props.theme.colorActive2};
+			color: ${(props: StyleProps) => props.theme.colorActive2};
 		}
 	}
 
 	${StyledTitle} {
-		color: ${(props: any) => props.theme.color2};
+		color: ${(props: StyleProps) => props.theme.color2};
 	}
 
 	${StyledIcon} {
-		color: ${(props: any) => props.theme.color2};
+		color: ${(props: StyleProps) => props.theme.color2};
 	}
 `;
 
@@ -207,28 +209,53 @@ function buttonClass(level: ButtonLevel) {
 	return StyledButtonSecondary;
 }
 
-const Button = React.forwardRef((props: Props, ref: any) => {
-	const iconOnly = props.iconName && !props.title;
+const Button = React.forwardRef(({
+	iconName, iconLabel, iconAnimation, color, title, level, fontSize, isSquare, tooltip, disabled, onClick: propsOnClick, ...unusedProps
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied;
+}: Props, ref: any) => {
+	const iconOnly = iconName && !title;
 
-	const StyledButton = buttonClass(props.level);
+	const StyledButton = buttonClass(level);
 
 	function renderIcon() {
-		if (!props.iconName) return null;
-		return <StyledIcon animation={props.iconAnimation} mr={iconOnly ? '0' : '6px'} color={props.color} className={props.iconName}/>;
+		if (!iconName) return null;
+		return <StyledIcon
+			aria-label={iconLabel ?? undefined}
+			aria-hidden={!iconLabel}
+			animation={iconAnimation}
+			mr={iconOnly ? '0' : '6px'}
+			color={color}
+			className={iconName}
+			role='img'
+		/>;
 	}
 
 	function renderTitle() {
-		if (!props.title) return null;
-		return <StyledTitle color={props.color}>{props.title}</StyledTitle>;
+		if (!title) return null;
+		return <StyledTitle color={color}>{title}</StyledTitle>;
 	}
 
 	function onClick() {
-		if (props.disabled) return;
-		props.onClick();
+		if (disabled) return;
+		propsOnClick();
 	}
 
 	return (
-		<StyledButton ref={ref} fontSize={props.fontSize} isSquare={props.isSquare} size={props.size} style={props.style} disabled={props.disabled} title={props.tooltip} className={props.className} iconOnly={iconOnly} onClick={onClick}>
+		<StyledButton
+			ref={ref}
+			fontSize={fontSize}
+			isSquare={isSquare}
+			disabled={disabled}
+			title={tooltip}
+			iconOnly={iconOnly}
+			onClick={onClick}
+
+			// When there's no title, the button needs a label. In this case, fall back
+			// to the tooltip.
+			aria-label={title ? undefined : tooltip}
+			aria-disabled={disabled}
+			{...unusedProps}
+		>
 			{renderIcon()}
 			{renderTitle()}
 		</StyledButton>

@@ -4,9 +4,10 @@ import { _ } from '@joplin/lib/locale';
 const { View, Text, ScrollView } = require('react-native');
 
 const { connect } = require('react-redux');
-const { themeStyle } = require('../global-style.js');
-const { ScreenHeader } = require('../screen-header.js');
+import { themeStyle } from '../global-style';
+import ScreenHeader from '../ScreenHeader';
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 function UpgradeSyncTargetScreen(props: any) {
 	const upgradeResult = useSyncTargetUpgrade();
 
@@ -55,7 +56,7 @@ function UpgradeSyncTargetScreen(props: any) {
 
 	return (
 		<ScrollView style={{ flex: 1, flexDirection: 'column', backgroundColor: theme.backgroundColor }}>
-			<ScreenHeader title={_('Sync Target Upgrade')} parentComponent={this} showShouldUpgradeSyncTargetMessage={false} showSearchButton={false} showBackButton={upgradeResult.done}/>
+			<ScreenHeader title={_('Sync Target Upgrade')} showShouldUpgradeSyncTargetMessage={false} showSearchButton={false} showBackButton={upgradeResult.done}/>
 			<View style={{ padding: 15, flex: 1 }}>
 				{renderInProgress()}
 				{renderDone()}
@@ -65,6 +66,7 @@ function UpgradeSyncTargetScreen(props: any) {
 	);
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 export default connect((state: any) => {
 	return {
 		themeId: state.settings.theme,

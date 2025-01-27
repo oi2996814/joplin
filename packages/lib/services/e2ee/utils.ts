@@ -1,10 +1,10 @@
-import Logger from '../../Logger';
+import Logger from '@joplin/utils/Logger';
 import BaseItem from '../../models/BaseItem';
 import MasterKey from '../../models/MasterKey';
 import Setting from '../../models/Setting';
 import { MasterKeyEntity } from './types';
 import EncryptionService from './EncryptionService';
-import { getActiveMasterKey, getActiveMasterKeyId, localSyncInfo, masterKeyEnabled, saveLocalSyncInfo, setEncryptionEnabled, SyncInfo } from '../synchronizer/syncInfoUtils';
+import { getActiveMasterKey, getActiveMasterKeyId, localSyncInfo, masterKeyEnabled, saveLocalSyncInfo, setActiveMasterKeyId, setEncryptionEnabled, SyncInfo } from '../synchronizer/syncInfoUtils';
 import JoplinError from '../../JoplinError';
 import { generateKeyPair, pkReencryptPrivateKey, ppkPasswordIsValid } from './ppk';
 import KvStore from '../KvStore';
@@ -36,7 +36,7 @@ export async function setupAndEnableEncryption(service: EncryptionService, maste
 
 export async function setupAndDisableEncryption(service: EncryptionService) {
 	// Allow disabling encryption even if some items are still encrypted, because whether E2EE is enabled or disabled
-	// should not affect whether items will enventually be decrypted or not (DecryptionWorker will still work as
+	// should not affect whether items will eventually be decrypted or not (DecryptionWorker will still work as
 	// long as there are encrypted items). Also even if decryption is disabled, it's possible that encrypted items
 	// will still be received via synchronisation.
 
@@ -113,7 +113,7 @@ export async function migrateMasterPassword() {
 	}
 }
 
-// All master keys normally should be decryped with the master password, however
+// All master keys normally should be decrypted with the master password, however
 // previously any master key could be encrypted with any password, so to support
 // this legacy case, we first check if the MK decrypts with the master password.
 // If not, try with the master key specific password, if any is defined.
@@ -131,6 +131,8 @@ export async function findMasterKeyPassword(service: EncryptionService, masterKe
 }
 
 export async function loadMasterKeysFromSettings(service: EncryptionService) {
+	activeMasterKeySanityCheck();
+
 	const masterKeys = await MasterKey.all();
 	const activeMasterKeyId = getActiveMasterKeyId();
 
@@ -140,18 +142,43 @@ export async function loadMasterKeysFromSettings(service: EncryptionService) {
 		const mk = masterKeys[i];
 		if (service.isMasterKeyLoaded(mk)) continue;
 
-		const password = await findMasterKeyPassword(service, mk);
-		if (!password) continue;
-
-		try {
-			await service.loadMasterKey(mk, password, activeMasterKeyId === mk.id);
-		} catch (error) {
-			logger.warn(`Cannot load master key ${mk.id}. Invalid password?`, error);
-		}
+		await service.loadMasterKey(mk, async () => {
+			const password = await findMasterKeyPassword(service, mk);
+			return password;
+		}, activeMasterKeyId === mk.id);
 	}
 
 	logger.info(`Loaded master keys: ${service.loadedMasterKeysCount()}`);
 }
+
+// In some rare cases (normally should no longer be possible), a disabled master
+// key end up being the active one (the one used to encrypt data). This sanity
+// check resolves this by making an enabled key the active one.
+export const activeMasterKeySanityCheck = () => {
+	const syncInfo = localSyncInfo();
+	const activeMasterKeyId = syncInfo.activeMasterKeyId;
+	const enabledMasterKeys = syncInfo.masterKeys.filter(mk => masterKeyEnabled(mk));
+	if (!enabledMasterKeys.length) return;
+
+	if (enabledMasterKeys.find(mk => mk.id === activeMasterKeyId)) {
+		logger.info('activeMasterKeySanityCheck: Active key is an enabled key - nothing to do');
+		return;
+	}
+
+	logger.info('activeMasterKeySanityCheck: Active key is **not** an enabled key - selecting a different key as the active key...');
+
+	const latestMasterKey = enabledMasterKeys.reduce((acc: MasterKeyEntity, current: MasterKeyEntity) => {
+		if (current.created_time > acc.created_time) {
+			return current;
+		} else {
+			return acc;
+		}
+	});
+
+	logger.info('activeMasterKeySanityCheck: Selected new active key:', latestMasterKey);
+
+	setActiveMasterKeyId(latestMasterKey.id);
+};
 
 export function showMissingMasterKeyMessage(syncInfo: SyncInfo, notLoadedMasterKeys: string[]) {
 	if (!syncInfo.masterKeys.length) return false;
@@ -185,7 +212,7 @@ export function getDefaultMasterKey(): MasterKeyEntity {
 // Get the master password if set, or throw an exception. This ensures that
 // things aren't accidentally encrypted with an empty string. Calling code
 // should look for "undefinedMasterPassword" code and prompt for password.
-export function getMasterPassword(throwIfNotSet: boolean = true): string {
+export function getMasterPassword(throwIfNotSet = true): string {
 	const password = Setting.value('encryption.masterPassword');
 	if (!password && throwIfNotSet) throw new JoplinError('Master password is not set', 'undefinedMasterPassword');
 	return password;
@@ -280,6 +307,10 @@ export async function resetMasterPassword(encryptionService: EncryptionService, 
 	}
 
 	Setting.setValue('encryption.masterPassword', newPassword);
+
+	const masterKey = await encryptionService.generateMasterKey(newPassword);
+	await MasterKey.save(masterKey);
+	await loadMasterKeysFromSettings(encryptionService);
 }
 
 export enum MasterPasswordStatus {

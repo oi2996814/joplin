@@ -1,13 +1,15 @@
 const urlUtils = require('./urlUtils.js');
 const Entities = require('html-entities').AllHtmlEntities;
 const htmlentities = new Entities().encode;
-const htmlparser2 = require('@joplin/fork-htmlparser2');
 const { escapeHtml } = require('./string-utils.js');
 
 // [\s\S] instead of . for multiline matching
 // https://stackoverflow.com/a/16119722/561309
 const imageRegex = /<img([\s\S]*?)src=["']([\s\S]*?)["']([\s\S]*?)>/gi;
 const anchorRegex = /<a([\s\S]*?)href=["']([\s\S]*?)["']([\s\S]*?)>/gi;
+const embedRegex = /<embed([\s\S]*?)src=["']([\s\S]*?)["']([\s\S]*?)>/gi;
+const objectRegex = /<object([\s\S]*?)data=["']([\s\S]*?)["']([\s\S]*?)>/gi;
+const pdfUrlRegex = /[\s\S]*?\.pdf$/i;
 
 const selfClosingElements = [
 	'area',
@@ -33,6 +35,7 @@ const selfClosingElements = [
 
 class HtmlUtils {
 
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	public headAndBodyHtml(doc: any) {
 		const output = [];
 		if (doc.head) output.push(doc.head.innerHTML);
@@ -63,6 +66,11 @@ class HtmlUtils {
 	}
 
 	// Returns the **encoded** URLs, so to be useful they should be decoded again before use.
+	public extractPdfUrls(html: string) {
+		return [...this.extractUrls(embedRegex, html), ...this.extractUrls(objectRegex, html)].filter(url => pdfUrlRegex.test(url));
+	}
+
+	// Returns the **encoded** URLs, so to be useful they should be decoded again before use.
 	public extractAnchorUrls(html: string) {
 		return this.extractUrls(anchorRegex, html);
 	}
@@ -78,7 +86,9 @@ class HtmlUtils {
 		return html.replace(htmlReg, `:/${id}`);
 	}
 
+	// eslint-disable-next-line @typescript-eslint/ban-types -- Old code before rule was applied
 	public replaceImageUrls(html: string, callback: Function) {
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 		return this.processImageTags(html, (data: any) => {
 			const newSrc = callback(data.src);
 			return {
@@ -88,11 +98,35 @@ class HtmlUtils {
 		});
 	}
 
+	// eslint-disable-next-line @typescript-eslint/ban-types -- Old code before rule was applied
+	public replaceEmbedUrls(html: string, callback: Function) {
+		if (!html) return '';
+		// We are adding the link as <a> since joplin disabled <embed>, <object> tags due to security reasons.
+		// See: CVE-2020-15930
+		html = html.replace(embedRegex, (_v: string, _before: string, src: string, _after: string) => {
+			const link = callback(src);
+			return `<a href="${link}">${escapeHtml(src)}</a>`;
+		});
+		html = html.replace(objectRegex, (_v: string, _before: string, src: string, _after: string) => {
+			const link = callback(src);
+			return `<a href="${link}">${escapeHtml(src)}</a>`;
+		});
+		return html;
+	}
+
+	// eslint-disable-next-line @typescript-eslint/ban-types -- Old code before rule was applied
+	public replaceMediaUrls(html: string, callback: Function) {
+		html = this.replaceImageUrls(html, callback);
+		html = this.replaceEmbedUrls(html, callback);
+		return html;
+	}
+
 	// Note that the URLs provided by this function are URL-encoded, which is
 	// usually what you want for web URLs. But if they are file:// URLs and the
 	// file path is going to be used, it will need to be unescaped first. The
 	// transformed SRC, must also be escaped before being sent back to this
 	// function.
+	// eslint-disable-next-line @typescript-eslint/ban-types -- Old code before rule was applied
 	public processImageTags(html: string, callback: Function) {
 		if (!html) return '';
 
@@ -127,6 +161,7 @@ class HtmlUtils {
 		});
 	}
 
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	public attributesHtml(attr: any) {
 		const output = [];
 
@@ -138,53 +173,66 @@ class HtmlUtils {
 		return output.join(' ');
 	}
 
-	public stripHtml(html: string) {
-		const output: string[] = [];
-
-		const tagStack: any[] = [];
-
-		const currentTag = () => {
-			if (!tagStack.length) return '';
-			return tagStack[tagStack.length - 1];
-		};
-
-		const disallowedTags = ['script', 'style', 'head', 'iframe', 'frameset', 'frame', 'object', 'base'];
-
-		const parser = new htmlparser2.Parser({
-
-			onopentag: (name: string) => {
-				tagStack.push(name.toLowerCase());
-			},
-
-			ontext: (decodedText: string) => {
-				if (disallowedTags.includes(currentTag())) return;
-				output.push(decodedText);
-			},
-
-			onclosetag: (name: string) => {
-				if (currentTag() === name.toLowerCase()) tagStack.pop();
-			},
-
-		}, { decodeEntities: true });
-
-		parser.write(html);
-		parser.end();
-
-		return output.join('').replace(/\s+/g, ' ');
-	}
 }
 
 export default new HtmlUtils();
 
 export function plainTextToHtml(plainText: string): string {
 	const lines = plainText
-		.replace(/[\n\r]/g, '\n')
+		.replace(/\r\n/g, '\n')
 		.split('\n');
 
-	const lineOpenTag = lines.length > 1 ? '<p>' : '';
-	const lineCloseTag = lines.length > 1 ? '</p>' : '';
+	if (lines.length === 1) return escapeHtml(lines[0]);
 
-	return lines
-		.map(line => lineOpenTag + escapeHtml(line) + lineCloseTag)
-		.join('');
+	// Step 1: Merge adjacent lines into paragraphs, with each line separated by
+	// '<br/>'. So 'one\ntwo' will become '<p>one</br>two</p>'
+
+	const step1: string[] = [];
+	let currentLine = '';
+
+	for (let line of lines) {
+		line = line.trimEnd();
+		if (!line) {
+			if (currentLine) {
+				step1.push(`<p>${currentLine}</p>`);
+				currentLine = '';
+			}
+			step1.push(line);
+		} else {
+			if (currentLine) {
+				currentLine += `<br/>${escapeHtml(line)}`;
+			} else {
+				currentLine = escapeHtml(line);
+			}
+		}
+	}
+
+	if (currentLine) step1.push(`<p>${currentLine}</p>`);
+
+	// Step 2: Convert the remaining empty lines to <br/> tags. Note that `n`
+	// successive empty lines should produced `n-1` <br/> tags. This makes more
+	// sense when looking at the tests.
+
+	const step2: string[] = [];
+	let newLineCount = 0;
+	for (let i = 0; i < step1.length; i++) {
+		const line = step1[i];
+
+		if (!line) {
+			newLineCount++;
+			if (newLineCount >= 2) step2.push('');
+		} else {
+			newLineCount = 0;
+			step2.push(line);
+		}
+	}
+
+	// Step 3: Actually convert the empty lines to <br/> tags
+
+	const step3: string[] = [];
+	for (const line of step2) {
+		step3.push(line ? line : '<br/>');
+	}
+
+	return step3.join('');
 }

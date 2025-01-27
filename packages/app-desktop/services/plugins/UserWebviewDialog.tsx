@@ -5,41 +5,13 @@ import PluginService from '@joplin/lib/services/plugins/PluginService';
 import WebviewController from '@joplin/lib/services/plugins/WebviewController';
 import UserWebview, { Props as UserWebviewProps } from './UserWebview';
 import UserWebviewDialogButtonBar from './UserWebviewDialogButtonBar';
-const styled = require('styled-components').default;
+import { focus } from '@joplin/lib/utils/focusHandler';
+import Dialog from '../../gui/Dialog';
 
 interface Props extends UserWebviewProps {
 	buttons: ButtonSpec[];
 	fitToContent: boolean;
 }
-
-const StyledRoot = styled.div`
-	display: flex;
-	flex: 1;
-	padding: 0;
-	margin: 0;
-	width: 100%;
-	height: 100%;
-	background-color: rgba(0,0,0,0.5);
-	box-sizing: border-box;
-	justify-content: center;
-	align-items: center;
-`;
-
-const Dialog = styled.div`
-	display: flex;
-	flex-direction: column;
-	background-color: ${(props: any) => props.theme.backgroundColor};
-	padding: ${(props: any) => `${props.theme.mainPadding}px`};
-	border-radius: 4px;
-	box-shadow: 0 6px 10px #00000077;
-	width: ${(props: any) => props.fitToContent ? 'auto' : '90vw'};
-	height: ${(props: any) => props.fitToContent ? 'auto' : '80vh'};
-`;
-
-const UserWebViewWrapper = styled.div`
-	display: flex;
-	flex: 1;
-`;
 
 function defaultButtons(): ButtonSpec[] {
 	return [
@@ -101,29 +73,27 @@ export default function UserWebviewDialog(props: Props) {
 		// We focus the dialog once it's ready to make sure that the ESC/Enter
 		// keyboard shortcuts are working.
 		// https://github.com/laurent22/joplin/issues/4474
-		if (webviewRef.current) webviewRef.current.focus();
+		if (webviewRef.current) focus('UserWebviewDialog', webviewRef.current);
 	}, []);
 
 	return (
-		<StyledRoot>
-			<Dialog fitToContent={props.fitToContent}>
-				<UserWebViewWrapper>
-					<UserWebview
-						ref={webviewRef}
-						html={props.html}
-						scripts={props.scripts}
-						pluginId={props.pluginId}
-						viewId={props.viewId}
-						themeId={props.themeId}
-						borderBottom={false}
-						fitToContent={props.fitToContent}
-						onSubmit={onSubmit}
-						onDismiss={onDismiss}
-						onReady={onReady}
-					/>
-				</UserWebViewWrapper>
-				<UserWebviewDialogButtonBar buttons={buttons}/>
-			</Dialog>
-		</StyledRoot>
+		<Dialog className={`user-webview-dialog ${props.fitToContent ? '-fit' : ''}`}>
+			<div className='user-dialog-wrapper'>
+				<UserWebview
+					ref={webviewRef}
+					html={props.html}
+					scripts={props.scripts}
+					pluginId={props.pluginId}
+					viewId={props.viewId}
+					themeId={props.themeId}
+					borderBottom={false}
+					fitToContent={props.fitToContent}
+					onSubmit={onSubmit}
+					onDismiss={onDismiss}
+					onReady={onReady}
+				/>
+			</div>
+			<UserWebviewDialogButtonBar buttons={buttons}/>
+		</Dialog>
 	);
 }

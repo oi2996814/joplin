@@ -1,18 +1,19 @@
 import BaseModel from '../BaseModel';
-import { SqlQuery } from '../database';
+import { NoteEntity, SqlQuery } from '../services/database/types';
 import BaseItem from './BaseItem';
+import { LoadOptions } from './utils/types';
 
 // - If is_associated = 1, note_resources indicates which note_id is currently associated with the given resource_id
 // - If is_associated = 0, note_resources indicates which note_id *was* associated with the given resource_id
-// - last_seen_time tells the last time that reosurce was associated with this note.
+// - last_seen_time tells the last time that resource was associated with this note.
 // - If last_seen_time is 0, it means the resource has never been associated with any note.
 
 export default class NoteResource extends BaseModel {
-	static tableName() {
+	public static tableName() {
 		return 'note_resources';
 	}
 
-	static modelType() {
+	public static modelType() {
 		return BaseModel.TYPE_NOTE_RESOURCE;
 	}
 
@@ -71,12 +72,38 @@ export default class NoteResource extends BaseModel {
 	// 	await this.db().transactionExecBatch(queries);
 	// }
 
-	static async associatedNoteIds(resourceId: string): Promise<string[]> {
+	public static async associatedNoteIds(resourceId: string): Promise<string[]> {
 		const rows = await this.modelSelectAll('SELECT note_id FROM note_resources WHERE resource_id = ? AND is_associated = 1', [resourceId]);
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 		return rows.map((r: any) => r.note_id);
 	}
 
-	static async setAssociatedResources(noteId: string, resourceIds: string[]) {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+	public static async associatedResourceNotes(resourceIds: string[], options: LoadOptions = null): Promise<Record<string, any>> {
+		if (!resourceIds.length) return {};
+
+		const fields: string[] = options && options.fields ? (options.fields as string[]).slice() : [];
+		fields.push('resource_id');
+		fields.push('note_id');
+
+		const rows = await this.modelSelectAll(`
+			SELECT ${this.selectFields({ ...options, fields })}
+			FROM note_resources
+			LEFT JOIN notes
+			ON notes.id = note_resources.note_id
+			WHERE resource_id IN (${this.escapeIdsForSql(resourceIds)}) AND is_associated = 1
+		`);
+
+		const output: Record<string, NoteEntity[]> = {};
+		for (const row of rows) {
+			if (!output[row.resource_id]) output[row.resource_id] = [];
+			output[row.resource_id].push(row);
+		}
+
+		return output;
+	}
+
+	public static async setAssociatedResources(noteId: string, resourceIds: string[]) {
 		const existingRows = await this.modelSelectAll('SELECT * FROM note_resources WHERE note_id = ?', [noteId]);
 
 		const notProcessedResourceIds = resourceIds.slice();
@@ -100,7 +127,7 @@ export default class NoteResource extends BaseModel {
 		await this.db().transactionExecBatch(queries);
 	}
 
-	static async addOrphanedResources() {
+	public static async addOrphanedResources() {
 		const missingResources = await this.db().selectAll('SELECT id FROM resources WHERE id NOT IN (SELECT DISTINCT resource_id FROM note_resources)');
 		const queries = [];
 		for (let i = 0; i < missingResources.length; i++) {
@@ -109,7 +136,7 @@ export default class NoteResource extends BaseModel {
 			// If the resource is not associated with any note, and has never
 			// been synced, it means it's a local resource that was removed from
 			// a note (or the note was deleted). In which case, we set a
-			// "last_seen_time", so that it can be considered an orphan reosurce
+			// "last_seen_time", so that it can be considered an orphan resource
 			// that can be auto-deleted.
 			//
 			// https://github.com/laurent22/joplin/issues/932#issuecomment-933736405
@@ -119,17 +146,17 @@ export default class NoteResource extends BaseModel {
 
 			queries.push({
 				sql: 'INSERT INTO note_resources (note_id, resource_id, is_associated, last_seen_time) VALUES (?, ?, ?, ?)',
-				params: ['', id, 0, lastSeenTime] }
+				params: ['', id, 0, lastSeenTime] },
 			);
 		}
 		await this.db().transactionExecBatch(queries);
 	}
 
-	static async remove(noteId: string) {
+	public static async remove(noteId: string) {
 		await this.db().exec({ sql: 'UPDATE note_resources SET is_associated = 0 WHERE note_id = ?', params: [noteId] });
 	}
 
-	static async orphanResources(expiryDelay: number = null) {
+	public static async orphanResources(expiryDelay: number = null) {
 		if (expiryDelay === null) expiryDelay = 1000 * 60 * 60 * 24 * 10;
 		const cutOffTime = Date.now() - expiryDelay;
 		const output = await this.modelSelectAll(
@@ -141,12 +168,13 @@ export default class NoteResource extends BaseModel {
 			AND last_seen_time < ?
 			AND last_seen_time != 0
 		`,
-			[cutOffTime]
+			[cutOffTime],
 		);
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 		return output.map((r: any) => r.resource_id);
 	}
 
-	static async deleteByResource(resourceId: string) {
+	public static async deleteByResource(resourceId: string) {
 		await this.db().exec('DELETE FROM note_resources WHERE resource_id = ?', [resourceId]);
 	}
 }

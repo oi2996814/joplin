@@ -49,10 +49,11 @@ function renderCommand(cmd) {
 
 function getCommands() {
 	const output = [];
+	// eslint-disable-next-line github/array-foreach -- Old code before rule was applied
 	fs.readdirSync(__dirname).forEach(path => {
 		if (path.indexOf('command-') !== 0) return;
 		const ext = fileExtension(path);
-		if (ext != 'js') return;
+		if (ext !== 'js') return;
 
 		const CommandClass = require(`./${path}`);
 		const cmd = new CommandClass();
@@ -131,6 +132,7 @@ async function main() {
 	const commandsText = commandBlocks.join('\n\n');
 	const footerText = getFooter();
 
+	// eslint-disable-next-line no-console
 	console.info(`${headerText}\n\n` + 'USAGE' + `\n\n${commandsText}\n\n${footerText}`);
 }
 

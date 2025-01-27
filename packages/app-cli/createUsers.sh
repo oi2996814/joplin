@@ -2,7 +2,7 @@
 
 # Start the server with:
 #
-# JOPLIN_IS_TESTING=1 yarn run start-dev
+# JOPLIN_IS_TESTING=1 yarn start-dev
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
 
@@ -45,7 +45,7 @@ while [ "$NUM" -lt 400 ]; do
 	echo "config keychain.supported 0" >> "$CMD_FILE" 
 	echo "config sync.target 10" >> "$CMD_FILE" 
 	echo "config sync.10.username $USER_EMAIL" >> "$CMD_FILE" 
-	echo "config sync.10.password hunter1hunter2hunter3" >> "$CMD_FILE"
+	echo "config sync.10.password 111111" >> "$CMD_FILE"
 	echo "sync" >> "$CMD_FILE"
 
 	yarn start --profile "$PROFILE_DIR" batch "$CMD_FILE"

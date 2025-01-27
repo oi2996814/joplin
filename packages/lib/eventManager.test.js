@@ -4,16 +4,14 @@
 const { checkThrow } = require('./testing/test-utils.js');
 const eventManager = require('./eventManager').default;
 
-describe('eventManager', function() {
+describe('eventManager', () => {
 
-	beforeEach(async (done) => {
+	beforeEach(async () => {
 		eventManager.reset();
-		done();
 	});
 
-	afterEach(async (done) => {
+	afterEach(async () => {
 		eventManager.reset();
-		done();
 	});
 
 	it('should watch state props', (async () => {

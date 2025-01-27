@@ -1,13 +1,13 @@
 import { NoteEditorProps } from '../utils/types';
 
-const { buildStyle } = require('@joplin/lib/theme');
+import { buildStyle } from '@joplin/lib/theme';
 
 export default function styles(props: NoteEditorProps) {
-	return buildStyle(['NoteEditor'], props.themeId, (theme: any) => {
+	return buildStyle(['NoteEditor'], props.themeId, theme => {
 		return {
 			root: {
 				boxSizing: 'border-box',
-				paddingLeft: 0,// theme.mainPadding,
+				paddingLeft: 0, // theme.mainPadding,
 				paddingTop: 0,
 				width: '100%',
 				height: '100%',

@@ -20,7 +20,7 @@ async function doLogin(email: string, password: string): Promise<AppContext> {
 	return context;
 }
 
-describe('index_login', function() {
+describe('index_login', () => {
 
 	beforeAll(async () => {
 		await beforeAllDb('index_login');
@@ -34,7 +34,7 @@ describe('index_login', function() {
 		await beforeEachDb();
 	});
 
-	test('should show the login page', async function() {
+	test('should show the login page', async () => {
 		const context = await koaAppContext({
 			request: {
 				method: 'GET',
@@ -44,12 +44,12 @@ describe('index_login', function() {
 
 		await routeHandler(context);
 
-		const doc = parseHtml(context.response.body);
+		const doc = parseHtml(context.response.body as string);
 		expect(!!doc.querySelector('input[name=email]')).toBe(true);
 		expect(!!doc.querySelector('input[name=password]')).toBe(true);
 	});
 
-	test('should login', async function() {
+	test('should login', async () => {
 		const user = await createUser(1);
 
 		const context = await doLogin(user.email, '123456');
@@ -58,7 +58,7 @@ describe('index_login', function() {
 		expect(session.user_id).toBe(user.id);
 	});
 
-	test('should not login with invalid credentials', async function() {
+	test('should not login with invalid credentials', async () => {
 		const user = await createUser(1);
 
 		{
@@ -70,6 +70,40 @@ describe('index_login', function() {
 			const context = await doLogin(user.email, 'bad');
 			expect(!cookieGet(context, 'sessionId')).toBe(true);
 		}
+	});
+
+	test('should redirect if already logged in', async () => {
+		const user = await createUser(1);
+
+		const context = await doLogin(user.email, '123456');
+		const sessionId = cookieGet(context, 'sessionId');
+
+		const getContext = await koaAppContext({
+			sessionId: sessionId,
+			request: {
+				method: 'GET',
+				url: '/login',
+			},
+		});
+
+		await routeHandler(getContext);
+
+		expect(getContext.response.status).toBe(302);
+	});
+
+	test('should not redirect if sessionId is not valid', async () => {
+
+		const getContext = await koaAppContext({
+			sessionId: 'no-sense',
+			request: {
+				method: 'GET',
+				url: '/login',
+			},
+		});
+
+		await routeHandler(getContext);
+
+		expect(getContext.response.status).toBe(200);
 	});
 
 });

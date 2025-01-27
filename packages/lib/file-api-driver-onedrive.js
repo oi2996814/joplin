@@ -3,6 +3,7 @@ const { basicDelta } = require('./file-api');
 const { dirname, basename } = require('./path-utils');
 const shim = require('./shim').default;
 const Buffer = require('buffer').Buffer;
+const { ltrimSlashes } = require('./path-utils');
 
 class FileApiDriverOneDrive {
 	constructor(api) {
@@ -53,7 +54,7 @@ class FileApiDriverOneDrive {
 		try {
 			item = await this.api_.execJson('GET', this.makePath_(path), this.itemFilter_());
 		} catch (error) {
-			if (error.code == 'itemNotFound') return null;
+			if (error.code === 'itemNotFound') return null;
 			throw error;
 		}
 		return item;
@@ -80,11 +81,9 @@ class FileApiDriverOneDrive {
 	}
 
 	async list(path, options = null) {
-		options = Object.assign({}, {
-			context: null,
-		}, options);
+		options = { context: null, ...options };
 
-		let query = Object.assign({}, this.itemFilter_(), { '$top': 1000 });
+		let query = { ...this.itemFilter_(), '$top': 1000 };
 		let url = `${this.makePath_(path)}:/children`;
 
 		if (options.context) {
@@ -107,7 +106,7 @@ class FileApiDriverOneDrive {
 		if (!options) options = {};
 
 		try {
-			if (options.target == 'file') {
+			if (options.target === 'file') {
 				const response = await this.api_.exec('GET', `${this.makePath_(path)}:/content`, null, null, options);
 				return response;
 			} else {
@@ -115,7 +114,7 @@ class FileApiDriverOneDrive {
 				return content;
 			}
 		} catch (error) {
-			if (error.code == 'itemNotFound') return null;
+			if (error.code === 'itemNotFound') return null;
 			throw error;
 		}
 	}
@@ -140,7 +139,7 @@ class FileApiDriverOneDrive {
 		// We need to check the file size as files > 4 MBs are uploaded in a different way than files < 4 MB (see https://docs.microsoft.com/de-de/onedrive/developer/rest-api/concepts/upload?view=odsp-graph-online)
 		let byteSize = null;
 
-		if (options.source == 'file') {
+		if (options.source === 'file') {
 			byteSize = (await shim.fsDriver().stat(options.path)).size;
 		} else {
 			options.headers = { 'Content-Type': 'text/plain' };
@@ -198,11 +197,12 @@ class FileApiDriverOneDrive {
 
 	async clearRoot() {
 		const recurseItems = async (path) => {
+			path = ltrimSlashes(path);
 			const result = await this.list(this.fileApi_.fullPath(path));
 			const output = [];
 
 			for (const item of result.items) {
-				const fullPath = `${path}/${item.path}`;
+				const fullPath = ltrimSlashes(`${path}/${item.path}`);
 				if (item.isDir) {
 					await recurseItems(fullPath);
 				}

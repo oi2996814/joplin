@@ -20,6 +20,12 @@ You can pass [arguments](https://github.com/laurent22/joplin/blob/dev/Joplin_ins
 
 <pre><code style="word-break: break-all">wget -O - https://raw.githubusercontent.com/laurent22/joplin/dev/Joplin_install_and_update.sh | bash -s -- --argument1 --argument2</code></pre>
 
+## Desktop application will not launch on Linux
+
+If you downloaded the AppImage directly and therefore did not install via the recommended script then it may not be currently allowed to execute and needs to have these permissions set manually (see [AppImage User Guide](https://docs.appimage.org/introduction/quickstart.html#how-to-run-an-AppImage)).
+
+If execution permissions are correct and it still does not launch then your system may not have the `libfuse2` library that AppImages require to run. This library requirement is inherent to the AppImage format and not Joplin specifically. For more info see [this forum thread](https://discourse.joplinapp.org/t/appimage-incompatibility-in-ubuntu-22-04/25173) which has further detail on the issue and an [Ubuntu specific fix](https://discourse.joplinapp.org/t/appimage-incompatibility-in-ubuntu-22-04/25173/12).
+
 ## How can I edit my note in an external text editor?
 
 The editor command (may include arguments) defines which editor will be used to open a note. If none is provided it will try to auto-detect the default editor. If this does nothing or you want to change it for Joplin, you need to configure it in the Preferences -> Text editor command.
@@ -78,7 +84,7 @@ You may use a special keyboard such as [Multiling O Keyboard](https://play.googl
 
 ## The initial sync is very slow, how can I speed it up?
 
-Whenever importing a large number of notes, for example from Evernote, it may take a very long time for the first sync to complete. There are various techniques to speed thing up (if you don't want to simply wait for the sync to complete), which are outlined in [this post](https://discourse.joplinapp.org/t/workaround-for-slow-initial-bulk-sync-after-evernote-import/746?u=laurent).
+Whenever importing a large number of notes, for example from Evernote, it may take a very long time for the first sync to complete. There are various techniques to speed this up (if you don't want to simply wait for the sync to complete), which are outlined in [this post](https://discourse.joplinapp.org/t/workaround-for-slow-initial-bulk-sync-after-evernote-import/746?u=laurent).
 
 ## Not all notes, folders, or tags are displayed on the mobile app
 
@@ -86,7 +92,7 @@ Joplin does not have a background sync on mobile devices. When Joplin is closed,
 
 ## How can I check the sync status?
 
-Go to the synchronisation page. You can find it on the desktop application under `Help > Synchronisation Status` and on the mobile app under `Configuration > SYNC STATUS`.
+Go to the synchronisation page. You can find it on the desktop application under `Help > Synchronisation Status` and on the mobile app under `Configuration > Tools > SYNC STATUS`.
 
 `total items` = How many items there are in total to sync.  
 `synced items` = How many items have already been uploaded or downloaded.
@@ -99,13 +105,7 @@ Unfortunately it is not possible. Joplin synchronises with file systems using an
 
 ## Could there be a password to restrict access to Joplin?
 
-The end to end encryption that Joplin implements is to protect the data during transmission and on the cloud service so that only you can access it.
-
-On the local device it is assumed that the data is safe due to the OS built-in security features. If additional security is needed it's always possible to put the notes on an encrypted Truecrypt drive for instance.
-
-For these reasons, because the OS or yourself can easily protect the local data, no PIN or password is currently supported to access Joplin.
-
-There is however an issue open about it, so pull requests are welcome: https://github.com/laurent22/joplin/issues/289
+On mobile, you may enable the biometric lock to protect the access to the Joplin application. On desktop we do not currently support this. There is however an issue open about it: https://github.com/laurent22/joplin/issues/289
 
 ## Why is my WebDAV host not working?
 
@@ -133,7 +133,12 @@ In this case, [make sure you enter the correct WebDAV URL](https://github.com/la
 
 - Check your username and password. **Type it manually** (without copying and pasting it) and try again.
 - Check the WebDAV URL - to get the correct URL, go to Nextcloud and, in the left sidebar, click on "Settings" and copy the WebDAV URL from there. **Do not forget to add the folder you've created to that URL**. For example, if the base the WebDAV URL is "https://example.com/nextcloud/remote.php/webdav/" and you want the notes to be synced in the "Joplin" directory, you need to give the URL "https://example.com/nextcloud/remote.php/webdav/Joplin" **and you need to create the "Joplin" directory yourself**.
-- Did you enable **2FA** (Multi-factor authentication) on Nextcloud? In that case, you need to [create a one-time password for Joplin on the Nextcloud admin interface](https://github.com/laurent22/joplin/issues/1453#issuecomment-486640902).
+- Did you enable **2FA** (Multi-factor authentication) on Nextcloud? In that case, you need to [create an app password for Joplin in the Nextcloud admin interface](https://github.com/laurent22/joplin/issues/1453#issuecomment-486640902).
+
+## Why did my sync and encryption passwords disappear after updating Joplin?
+
+- With version 2.12, Joplin supports M1 Macs natively! As a result, upgrading Joplin on one of these systems causes Joplin to lose access to information stored by older versions of the app in the system keychain. This includes sync and encryption passwords.
+- Re-entering the passwords should fix related sync and encryption issues.
 
 ## How can I use self-signed SSL certificates on Android?
 
@@ -147,6 +152,10 @@ If `Show tray icon` is enabled, closing the Joplin window does not quit the appl
 - right-click on the Joplin tray icon and then click `Exit`
 
 Additionally the Windows Task Manager can be used to verify whether Joplin is still around.
+
+## Are notebooks and notes backed up during an iOS backup to your Mac?
+
+Notebooks and notes on iOS are not backed up when [backing up to your Mac](https://support.apple.com/guide/mac-help/back-up-and-restore-your-device-mchla3c8ed03/mac).
 
 ## Why is it named Joplin?
 

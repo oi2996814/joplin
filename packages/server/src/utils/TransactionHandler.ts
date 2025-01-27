@@ -17,8 +17,8 @@ export default class TransactionHandler {
 
 	private transactionStack_: TransactionInfo[] = [];
 	private activeTransaction_: Knex.Transaction = null;
-	private transactionIndex_: number = 0;
-	private logEnabled_: boolean = false;
+	private transactionIndex_ = 0;
+	private logEnabled_ = false;
 	private db_: Knex = null;
 
 	public constructor(db: DbConnection) {
@@ -35,6 +35,7 @@ export default class TransactionHandler {
 
 	private log(s: string): void {
 		if (!this.logEnabled_) return;
+		// eslint-disable-next-line no-console
 		console.info(`TransactionHandler: ${s}`);
 	}
 
@@ -92,7 +93,7 @@ export default class TransactionHandler {
 	// sub-function throws an error, it will propagate to the parent function,
 	// which will rollback the connection.
 	//
-	// If a sub-function throws an error, but it's catched by the parent, we
+	// If a sub-function throws an error, but it's caught by the parent, we
 	// also don't want the transaction to be rollbacked, because the errors are
 	// essentially managed by the parent function. This is for example how
 	// ItemModel::saveFromRawContent works because it catches any error and

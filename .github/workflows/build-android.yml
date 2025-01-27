@@ -1,0 +1,43 @@
+# The goal of this action is to compile the Android debug build. That should
+# tell us automatically if something got broken when a dependency was changed.
+
+name: react-native-android-build-apk
+on: [push, pull_request]
+
+jobs:
+  AssembleRelease:
+    if: github.repository == 'laurent22/joplin'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update || true
+          sudo apt-get install -y libsecret-1-dev
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '20'
+          
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'yarn'
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Yarn
+        run: |
+          corepack enable
+
+      - name: Install
+        run:  yarn install
+
+      - name: Assemble Android Release
+        run: |
+          cd packages/app-mobile/android
+          sed -i -- 's/signingConfig signingConfigs.release/signingConfig signingConfigs.debug/' app/build.gradle
+          ./gradlew assembleRelease
+          
