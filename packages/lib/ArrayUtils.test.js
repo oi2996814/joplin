@@ -1,10 +1,8 @@
 const ArrayUtils = require('./ArrayUtils');
 
-describe('ArrayUtils', function() {
+describe('ArrayUtils', () => {
 
-	beforeEach(async (done) => {
-		done();
-	});
+
 
 	it('should remove array elements', (async () => {
 		let a = ['un', 'deux', 'trois'];
@@ -17,6 +15,13 @@ describe('ArrayUtils', function() {
 		a = ['un', 'deux', 'trois'];
 		a = ArrayUtils.removeElement(a, 'not in there');
 		expect(a.length).toBe(3);
+	}));
+
+	it('should pull array elements', (async () => {
+		expect(ArrayUtils.pull(['a', 'b', 'c', 'a', 'b', 'c'], 'a')).toEqual(['b', 'c', 'b', 'c']);
+		expect(ArrayUtils.pull(['b', 'c', 'b', 'c'], 'a')).toEqual(['b', 'c', 'b', 'c']);
+		expect(ArrayUtils.pull(['a', 'b', 'c', 'a', 'b', 'c'], 'a', 'c')).toEqual(['b', 'b']);
+		expect(ArrayUtils.pull([], 'a')).toEqual([]);
 	}));
 
 	it('should find items using binary search', (async () => {
@@ -67,6 +72,7 @@ describe('ArrayUtils', function() {
 			],
 		];
 
+		// eslint-disable-next-line github/array-foreach -- Old code before rule was applied
 		testCases.forEach((t, i) => {
 			const intervals = t[0];
 			const expected = t[1];

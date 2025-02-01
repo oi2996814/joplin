@@ -2,37 +2,63 @@
 
 buildscript {
     ext {
-        buildToolsVersion = "30.0.2"
-        minSdkVersion = 21
-        compileSdkVersion = 30
-        targetSdkVersion = 30
-        ndkVersion = "21.4.7075529"
+        buildToolsVersion = "34.0.0"
+        minSdkVersion = 23
+
+        compileSdkVersion = 34
+        targetSdkVersion = 34
+
+        ndkVersion = "26.1.10909125"
+        kotlinVersion = "1.9.22"
     }
     repositories {
         google()
         mavenCentral()
     }
     dependencies {
-        classpath("com.android.tools.build:gradle:4.2.2")
-        // NOTE: Do not place your application dependencies here; they belong
-        // in the individual module build.gradle files
+        classpath("com.android.tools.build:gradle")
+        classpath("com.facebook.react:react-native-gradle-plugin")
+        classpath("org.jetbrains.kotlin:kotlin-gradle-plugin")
     }
 }
 
 allprojects {
     repositories {
         mavenCentral()
-        mavenLocal()
+
+        // Seems to be required for react-native-vosk, otherwise the lib looks for it at "https://maven.aliyun.com/repository/jcenter/com/alphacephei/vosk-android/0.3.46/vosk-android-0.3.46.aar" but it's not there. And we get this error:
+        //
+        // Execution failed for task ':app:checkDebugAarMetadata'.
+        // > Could not resolve all files for configuration ':app:debugRuntimeClasspath'.
+        //    > Failed to transform vosk-android-0.3.46.aar (com.alphacephei:vosk-android:0.3.46) to match attributes {artifactType=android-aar-metadata, org.gradle.status=release}.
+        //       > Could not find vosk-android-0.3.46.aar (com.alphacephei:vosk-android:0.3.46).
+        //         Searched in the following locations:
+        //             https://maven.aliyun.com/repository/jcenter/com/alphacephei/vosk-android/0.3.46/vosk-android-0.3.46.aar
+        //
+        // But according to this page, the lib is on the Apache repository:
+        //
+        // https://search.maven.org/artifact/com.alphacephei/vosk-android/0.3.46/aar
+        maven { url "https://maven.apache.org" }
+
         maven {
-            // All of React Native (JS, Obj-C sources, Android binaries) is installed from npm
-            url("$rootDir/../node_modules/react-native/android")
-        }
-        maven {
-            // Android JSC is installed from npm
-            url("$rootDir/../node_modules/jsc-android/dist")
+            // Required by react-native-fingerprint-scanner
+            // https://github.com/hieuvp/react-native-fingerprint-scanner/issues/192
+            url "https://maven.aliyun.com/repository/jcenter"
         }
 
+        // Also required for react-native-vosk?
+        maven { url "https://maven.google.com" }
+
+        // Maybe still needed to fetch above package?
+        
         google()
         maven { url 'https://www.jitpack.io' }
+
+        maven {
+            // expo-camera bundles a custom com.google.android:cameraview
+            url "$rootDir/../node_modules/expo-camera/android/maven"
+        }
     }
 }
+ 
+apply plugin: "com.facebook.react.rootproject"

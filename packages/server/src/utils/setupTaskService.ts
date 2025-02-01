@@ -1,30 +1,41 @@
 import { Models } from '../models/factory';
-import TaskService, { Task, TaskId } from '../services/TaskService';
+import { TaskId } from '../services/database/types';
+import TaskService, { Task, taskIdToLabel } from '../services/TaskService';
+import { Services } from '../services/types';
+import { logHeartbeat as logHeartbeatMessage } from './metrics';
 import { Config, Env } from './types';
+import { Day } from './time';
 
-export default function(env: Env, models: Models, config: Config): TaskService {
-	const taskService = new TaskService(env, models, config);
+export default async function(env: Env, models: Models, config: Config, services: Services): Promise<TaskService> {
+	const taskService = new TaskService(env, models, config, services);
 
 	let tasks: Task[] = [
 		{
 			id: TaskId.DeleteExpiredTokens,
-			description: 'Delete expired tokens',
+			description: taskIdToLabel(TaskId.DeleteExpiredTokens),
 			schedule: '0 */6 * * *',
 			run: (models: Models) => models.token().deleteExpiredTokens(),
 		},
 
 		{
 			id: TaskId.UpdateTotalSizes,
-			description: 'Update total sizes',
+			description: taskIdToLabel(TaskId.UpdateTotalSizes),
 			schedule: '0 * * * *',
 			run: (models: Models) => models.item().updateTotalSizes(),
 		},
 
 		{
 			id: TaskId.CompressOldChanges,
-			description: 'Compress old changes',
+			description: taskIdToLabel(TaskId.CompressOldChanges),
 			schedule: '0 0 */2 * *',
 			run: (models: Models) => models.change().compressOldChanges(),
+		},
+
+		{
+			id: TaskId.ProcessUserDeletions,
+			description: taskIdToLabel(TaskId.ProcessUserDeletions),
+			schedule: '10 * * * *',
+			run: (_models: Models, services: Services) => services.userDeletion.runMaintenance(),
 		},
 
 		// Need to do it relatively frequently so that if the user fixes
@@ -33,37 +44,85 @@ export default function(env: Env, models: Models, config: Config): TaskService {
 		// the UpdateTotalSizes task being run.
 		{
 			id: TaskId.HandleOversizedAccounts,
-			description: 'Process oversized accounts',
+			description: taskIdToLabel(TaskId.HandleOversizedAccounts),
 			schedule: '30 */2 * * *',
 			run: (models: Models) => models.user().handleOversizedAccounts(),
 		},
 
-		// {
-		// 	id: TaskId.DeleteExpiredSessions,
-		// 	description: 'Delete expired sessions',
-		// 	schedule: '0 */6 * * *',
-		// 	run: (models: Models) => models.session().deleteExpiredSessions(),
-		// },
+		{
+			id: TaskId.DeleteExpiredSessions,
+			description: taskIdToLabel(TaskId.DeleteExpiredSessions),
+			schedule: '0 */6 * * *',
+			run: (models: Models) => models.session().deleteExpiredSessions(),
+		},
+
+		{
+			id: TaskId.ProcessOrphanedItems,
+			description: taskIdToLabel(TaskId.ProcessOrphanedItems),
+			schedule: '15 * * * *',
+			run: (models: Models) => models.item().processOrphanedItems(),
+		},
+
+		{
+			id: TaskId.ProcessShares,
+			description: taskIdToLabel(TaskId.ProcessShares),
+			schedule: 'PT10S',
+			run: (models: Models) => models.share().updateSharedItems3(),
+		},
+
+		{
+			id: TaskId.ProcessEmails,
+			description: taskIdToLabel(TaskId.ProcessEmails),
+			schedule: '* * * * *',
+			run: (_models: Models, services: Services) => services.email.runMaintenance(),
+		},
+
+		{
+			id: TaskId.LogHeartbeatMessage,
+			description: taskIdToLabel(TaskId.LogHeartbeatMessage),
+			schedule: config.HEARTBEAT_MESSAGE_SCHEDULE,
+			run: (_models: Models, _services: Services) => logHeartbeatMessage(),
+		},
 	];
+
+	if (config.USER_DATA_AUTO_DELETE_ENABLED) {
+		tasks.push({
+			id: TaskId.AutoAddDisabledAccountsForDeletion,
+			description: taskIdToLabel(TaskId.AutoAddDisabledAccountsForDeletion),
+			schedule: '0 14 * * *',
+			run: (_models: Models, services: Services) => services.userDeletion.autoAddForDeletion(),
+		});
+	}
+
+	if (config.EVENTS_AUTO_DELETE_ENABLED) {
+		tasks.push({
+			id: TaskId.DeleteOldEvents,
+			description: taskIdToLabel(TaskId.DeleteOldEvents),
+			schedule: '0 0 * * *',
+			run: (models: Models) => models.event().deleteOldEvents(config.EVENTS_AUTO_DELETE_AFTER_DAYS * Day),
+		});
+	}
 
 	if (config.isJoplinCloud) {
 		tasks = tasks.concat([
 			{
 				id: TaskId.HandleBetaUserEmails,
-				description: 'Process beta user emails',
+				description: taskIdToLabel(TaskId.HandleBetaUserEmails),
 				schedule: '0 12 * * *',
 				run: (models: Models) => models.user().handleBetaUserEmails(),
 			},
 			{
 				id: TaskId.HandleFailedPaymentSubscriptions,
-				description: 'Process failed payment subscriptions',
+				description: taskIdToLabel(TaskId.HandleFailedPaymentSubscriptions),
 				schedule: '0 13 * * *',
 				run: (models: Models) => models.user().handleFailedPaymentSubscriptions(),
 			},
 		]);
 	}
 
-	taskService.registerTasks(tasks);
+	await taskService.registerTasks(tasks);
+
+	await taskService.resetInterruptedTasks();
 
 	return taskService;
 }

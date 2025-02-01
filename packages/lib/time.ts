@@ -1,3 +1,9 @@
+// -----------------------------------------------------------------------------------------------
+// !!IMPORTANT!! New time-related code should be added to @joplin/util/time and should be based on
+// `dayjs` (which is part of `@joplin/util`). Eventually we'll migrate all code here to
+// `@joplin/utils/time`.
+// -----------------------------------------------------------------------------------------------
+
 import shim from './shim';
 const moment = require('moment');
 
@@ -5,9 +11,9 @@ type ConditionHandler = ()=> boolean;
 
 class Time {
 
-	private dateFormat_: string = 'DD/MM/YYYY';
-	private timeFormat_: string = 'HH:mm';
-	private locale_: string = 'en-us';
+	private dateFormat_ = 'DD/MM/YYYY';
+	private timeFormat_ = 'HH:mm';
+	private locale_ = 'en-us';
 
 	public locale() {
 		return this.locale_;
@@ -89,7 +95,7 @@ class Time {
 		);
 	}
 
-	public unixMsToLocalDateTime(ms: number) {
+	public unixMsToLocalDateTime(ms: number): string {
 		return moment.unix(ms / 1000).format('DD/MM/YYYY HH:mm');
 	}
 
@@ -99,9 +105,10 @@ class Time {
 
 	public formatMsToLocal(ms: number, format: string = null) {
 		if (format === null) format = this.dateTimeFormat();
-		return moment(ms).format(format);
+		return moment(ms).format(format) as string;
 	}
 
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	public formatLocalToMs(localDateTime: any, format: string = null) {
 		if (format === null) format = this.dateTimeFormat();
 		const m = moment(localDateTime, format);
@@ -110,6 +117,7 @@ class Time {
 	}
 
 	// Mostly used as a utility function for the DateTime Electron component
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	public anythingToDateTime(o: any, defaultValue: Date = null) {
 		if (o && o.toDate) return o.toDate();
 		if (!o) return defaultValue;
@@ -119,6 +127,7 @@ class Time {
 		return m.isValid() ? m.toDate() : defaultValue;
 	}
 
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	public anythingToMs(o: any, defaultValue: number = null) {
 		if (o && o.toDate) return o.toDate();
 		if (!o) return defaultValue;
@@ -133,6 +142,7 @@ class Time {
 	}
 
 	public msleep(ms: number) {
+		// eslint-disable-next-line @typescript-eslint/ban-types -- Old code before rule was applied
 		return new Promise((resolve: Function) => {
 			shim.setTimeout(() => {
 				resolve();
@@ -145,17 +155,19 @@ class Time {
 	}
 
 
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	public goBackInTime(startDate: any, n: number, period: any) {
 		// period is a string (eg. "day", "week", "month", "year" ), n is an integer
 		return moment(startDate).startOf(period).subtract(n, period).format('x');
 	}
 
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	public goForwardInTime(startDate: any, n: number, period: any) {
 		return moment(startDate).startOf(period).add(n, period).format('x');
 	}
 
 	public async waitTillCondition(condition: ConditionHandler) {
-		if (condition()) return;
+		if (condition()) return null;
 
 		return new Promise(resolve => {
 			const iid = setInterval(() => {

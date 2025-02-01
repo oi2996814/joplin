@@ -4,8 +4,9 @@ import Folder from '../../models/Folder';
 import Note from '../../models/Note';
 import Tag from '../../models/Tag';
 import time from '../../time';
-import { fieldOrder } from './InteropService_Exporter_Md_frontmatter';
 import * as fs from 'fs-extra';
+import { ExportModuleOutputFormat } from './types';
+import { fieldOrder } from '../../utils/frontMatter';
 
 async function recreateExportDir() {
 	const dir = exportDir();
@@ -13,23 +14,22 @@ async function recreateExportDir() {
 	await fs.mkdirp(dir);
 }
 
-describe('interop/InteropService_Exporter_Md_frontmatter', function() {
+describe('interop/InteropService_Exporter_Md_frontmatter', () => {
 	async function exportAndLoad(path: string): Promise<string> {
 		const service = InteropService.instance();
 
 		await service.export({
 			path: exportDir(),
-			format: 'md_frontmatter',
+			format: ExportModuleOutputFormat.MarkdownFrontMatter,
 		});
 
 		return await fs.readFile(path, 'utf8');
 	}
 
-	beforeEach(async (done) => {
+	beforeEach(async () => {
 		await setupDatabaseAndSynchronizer(1);
 		await switchClient(1);
 		await recreateExportDir();
-		done();
 	});
 
 	test('should export MD file with YAML header', (async () => {
@@ -131,5 +131,24 @@ describe('interop/InteropService_Exporter_Md_frontmatter', function() {
 		expect(content).not.toContain('latitude');
 		expect(content).not.toContain('longitude');
 		expect(content).not.toContain('altitude');
+	}));
+
+	test('should export note without tag keyword if the tag has been deleted', (async () => {
+		const folder1 = await Folder.save({ title: 'folder1' });
+		const note = await Note.save({ title: 'NoTag', body: '**ma note**', parent_id: folder1.id });
+		const tag = await Tag.save({ title: 'tag' });
+		await Tag.setNoteTagsByIds(note.id, [tag.id]);
+
+		await Tag.delete(tag.id);
+		const content = await exportAndLoad(`${exportDir()}/folder1/NoTag.md`);
+		expect(content).not.toContain('tag');
+	}));
+
+	test('should export a valid file when the title starts with a dash', (async () => {
+		const folder1 = await Folder.save({ title: 'folder1' });
+		await Note.save({ title: '- title with dash', body: '**ma note**', parent_id: folder1.id });
+
+		const content = await exportAndLoad(`${exportDir()}/folder1/- title with dash.md`);
+		expect(content).toContain('title: \'- title with dash\'');
 	}));
 });

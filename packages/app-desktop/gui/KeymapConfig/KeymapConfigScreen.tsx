@@ -9,8 +9,8 @@ import useCommandStatus from './utils/useCommandStatus';
 import styles_ from './styles';
 import { _ } from '@joplin/lib/locale';
 
-const bridge = require('@electron/remote').require('./bridge').default;
 import shim from '@joplin/lib/shim';
+import bridge from '../../services/bridge';
 
 const keymapService = KeymapService.instance();
 
@@ -25,7 +25,6 @@ export const KeymapConfigScreen = ({ themeId }: KeymapConfigScreenProps) => {
 	const [keymapItems, keymapError, overrideKeymapItems, setAccelerator, resetAccelerator] = useKeymap();
 	const [recorderError, setRecorderError] = useState<Error>(null);
 	const [editing, enableEditing, disableEditing] = useCommandStatus();
-	const [hovering, enableHovering, disableHovering] = useCommandStatus();
 
 	const handleSave = (event: { commandName: string; accelerator: string }) => {
 		const { commandName, accelerator } = event;
@@ -56,13 +55,13 @@ export const KeymapConfigScreen = ({ themeId }: KeymapConfigScreenProps) => {
 			filters: [{ name: 'Joplin Keymaps (keymap-desktop.json)', extensions: ['json'] }],
 		});
 
-		if (filePath) {
+		if (filePath && filePath.length !== 0) {
 			const actualFilePath = filePath[0];
 			try {
 				const keymapFile = await shim.fsDriver().readFile(actualFilePath, 'utf-8');
 				overrideKeymapItems(JSON.parse(keymapFile));
-			} catch (err) {
-				bridge().showErrorMessageBox(_('Error: %s', err.message));
+			} catch (error) {
+				bridge().showErrorMessageBox(_('Error: %s', error.message));
 			}
 		}
 	};
@@ -77,8 +76,8 @@ export const KeymapConfigScreen = ({ themeId }: KeymapConfigScreenProps) => {
 			try {
 				// KeymapService is already synchronized with the in-state keymap
 				await keymapService.saveCustomKeymap(filePath);
-			} catch (err) {
-				bridge().showErrorMessageBox(err.message);
+			} catch (error) {
+				bridge().showErrorMessageBox(error.message);
 			}
 		}
 	};
@@ -88,20 +87,21 @@ export const KeymapConfigScreen = ({ themeId }: KeymapConfigScreenProps) => {
 			<div>
 				{accelerator.split('+').map(part => <kbd style={styles.kbd} key={part}>{part}</kbd>).reduce(
 					(accumulator, part) => (accumulator.length ? [...accumulator, ' + ', part] : [part]),
-					[]
+					[],
 				)}
 			</div>
 		);
 	};
 
 	const renderStatus = (commandName: string) => {
-		if (editing[commandName]) {
-			return (recorderError && <i className="fa fa-exclamation-triangle" title={recorderError.message} />);
-		} else if (hovering[commandName]) {
-			return (<i className="fa fa-pen" />);
-		} else {
-			return null;
+		if (!editing[commandName]) {
+			const editLabel = _('Change shortcut for "%s"', getLabel(commandName));
+			return <i className="fa fa-pen" role='img' aria-label={editLabel} title={editLabel}/>;
+		} else if (recorderError) {
+			return <i className="fa fa-exclamation-triangle" role='img' aria-label={recorderError.message} title={recorderError.message} />;
 		}
+
+		return null;
 	};
 
 	const renderError = (error: Error) => {
@@ -117,11 +117,16 @@ export const KeymapConfigScreen = ({ themeId }: KeymapConfigScreenProps) => {
 	};
 
 	const renderKeymapRow = ({ command, accelerator }: KeymapItem) => {
-		const handleClick = () => enableEditing(command);
-		const handleMouseEnter = () => enableHovering(command);
-		const handleMouseLeave = () => disableHovering(command);
+		const handleClick = () => {
+			if (!editing[command]) {
+				enableEditing(command);
+			} else if (recorderError) {
+				void bridge().showErrorMessageBox(recorderError.message);
+			}
+		};
+		const statusContent = renderStatus(command);
 		const cellContent =
-			<div style={styles.tableCell} onMouseEnter={handleMouseEnter} onMouseLeave={handleMouseLeave}>
+			<div className='keymap-shortcut-row-content'>
 				{editing[command] ?
 					<ShortcutRecorder
 						onSave={handleSave}
@@ -139,9 +144,15 @@ export const KeymapConfigScreen = ({ themeId }: KeymapConfigScreenProps) => {
 						}
 					</div>
 				}
-				<div style={styles.tableCellStatus} onClick={handleClick}>
-					{renderStatus(command)}
-				</div>
+				<button
+					className={`flat-button edit ${editing[command] ? '-editing' : ''}`}
+					style={styles.tableCellStatus}
+					aria-live={recorderError ? 'polite' : null}
+					tabIndex={statusContent ? 0 : -1}
+					onClick={handleClick}
+				>
+					{statusContent}
+				</button>
 			</div>;
 
 		return (

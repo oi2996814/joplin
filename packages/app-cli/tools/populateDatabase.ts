@@ -1,12 +1,14 @@
+/* eslint-disable no-console */
+
 // This script can be used to simulate a running production environment, by
 // having multiple users in parallel changing notes and synchronising.
 //
 // To get it working:
 //
-// - Run the Postgres database -- `sudo docker-compose --file docker-compose.db-dev.yml up`
+// - Run the Postgres database -- `sudo docker compose --file docker-compose.db-dev.yml up`
 // - Update the DB parameters in ~/joplin-credentials/server.env to use the dev
 //   database
-// - Run the server - `JOPLIN_IS_TESTING=1 yarn run start-dev`
+// - Run the server - `JOPLIN_IS_TESTING=1 yarn start-dev`
 // - Then run this script - `node populateDatabase.js`
 //
 // Currently it doesn't actually create the users, so that should be done using:
@@ -17,7 +19,7 @@
 
 import * as fs from 'fs-extra';
 import { homedir } from 'os';
-import { execCommand2 } from '@joplin/tools/tool-utils';
+import { execCommand } from '@joplin/utils';
 import { chdir } from 'process';
 
 const minUserNum = 1;
@@ -44,7 +46,7 @@ const processUser = async (userNum: number) => {
 
 	try {
 		const userEmail = `user${userNum}@example.com`;
-		const userPassword = 'hunter1hunter2hunter3';
+		const userPassword = '111111';
 		const commandFile = `${tempDir}/populateDatabase-${userNum}.txt`;
 		const profileDir = `${homedir()}/.config/joplindev-populate/joplindev-testing-${userNum}`;
 
@@ -64,7 +66,7 @@ const processUser = async (userNum: number) => {
 
 		await chdir(cliDir);
 
-		await execCommand2(['yarn', 'run', 'start-no-build', '--', '--profile', profileDir, 'batch', commandFile]);
+		await execCommand(['yarn', 'run', 'start-no-build', '--', '--profile', profileDir, 'batch', commandFile]);
 	} catch (error) {
 		console.error(`Could not process user ${userNum}:`, error);
 	} finally {
@@ -88,7 +90,7 @@ const main = async () => {
 
 	// Build the app once before starting, because we'll use start-no-build to
 	// run the scripts (faster)
-	await execCommand2(['yarn', 'run', 'build']);
+	await execCommand(['yarn', 'run', 'build']);
 
 	const focusUserNum = 0;
 

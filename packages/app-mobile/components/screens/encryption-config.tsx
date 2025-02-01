@@ -1,21 +1,22 @@
 const React = require('react');
 const { TextInput, TouchableOpacity, Linking, View, StyleSheet, Text, Button, ScrollView } = require('react-native');
 const { connect } = require('react-redux');
-const { ScreenHeader } = require('../screen-header.js');
-const { themeStyle } = require('../global-style.js');
-const DialogBox = require('react-native-dialogbox').default;
-const { dialogs } = require('../../utils/dialogs.js');
+import ScreenHeader from '../ScreenHeader';
+import { themeStyle } from '../global-style';
 import EncryptionService from '@joplin/lib/services/e2ee/EncryptionService';
 import { _ } from '@joplin/lib/locale';
 import time from '@joplin/lib/time';
 import { decryptedStatText, enableEncryptionConfirmationMessages, onSavePasswordClick, useInputMasterPassword, useInputPasswords, usePasswordChecker, useStats } from '@joplin/lib/components/EncryptionConfigScreen/utils';
 import { MasterKeyEntity } from '@joplin/lib/services/e2ee/types';
 import { State } from '@joplin/lib/reducer';
-import { SyncInfo } from '@joplin/lib/services/synchronizer/syncInfoUtils';
+import { masterKeyEnabled, SyncInfo } from '@joplin/lib/services/synchronizer/syncInfoUtils';
 import { getDefaultMasterKey, setupAndDisableEncryption, toggleAndSetupEncryption } from '@joplin/lib/services/e2ee/utils';
-import { useMemo, useRef, useState } from 'react';
+import { useMemo, useState } from 'react';
+import { Divider, List } from 'react-native-paper';
+import shim from '@joplin/lib/shim';
 
 interface Props {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	themeId: any;
 	masterKeys: MasterKeyEntity[];
 	passwords: Record<string, string>;
@@ -34,13 +35,14 @@ const EncryptionConfigScreen = (props: Props) => {
 	const { passwordChecks, masterPasswordKeys } = usePasswordChecker(props.masterKeys, props.activeMasterKeyId, props.masterPassword, props.passwords);
 	const { inputPasswords, onInputPasswordChange } = useInputPasswords(props.passwords);
 	const { inputMasterPassword, onMasterPasswordSave, onMasterPasswordChange } = useInputMasterPassword(props.masterKeys, props.activeMasterKeyId);
-	const dialogBoxRef = useRef(null);
+	const [showDisabledKeys, setShowDisabledKeys] = useState(false);
 
 	const mkComps = [];
+	const disabledMkComps = [];
 
 	const nonExistingMasterKeyIds = props.notLoadedMasterKeys.slice();
 
-	const theme: any = useMemo(() => {
+	const theme = useMemo(() => {
 		return themeStyle(props.themeId);
 	}, [props.themeId]);
 
@@ -79,6 +81,10 @@ const EncryptionConfigScreen = (props: Props) => {
 				flex: 1,
 				padding: theme.margin,
 			},
+			disabledContainer: {
+				paddingLeft: theme.margin,
+				paddingRight: theme.margin,
+			},
 		};
 
 		return StyleSheet.create(styles);
@@ -86,12 +92,13 @@ const EncryptionConfigScreen = (props: Props) => {
 
 	const decryptedItemsInfo = props.encryptionEnabled ? <Text style={styles.normalText}>{decryptedStatText(stats)}</Text> : null;
 
-	const renderMasterKey = (_num: number, mk: MasterKeyEntity) => {
+	const renderMasterKey = (mk: MasterKeyEntity) => {
 		const theme = themeStyle(props.themeId);
 
 		const password = inputPasswords[mk.id] ? inputPasswords[mk.id] : '';
 		const passwordOk = passwordChecks[mk.id] === true ? '✔' : '❌';
 
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 		const inputStyle: any = { flex: 1, marginRight: 10, color: theme.color };
 		inputStyle.borderBottomWidth = 1;
 		inputStyle.borderBottomColor = theme.dividerColor;
@@ -151,7 +158,7 @@ const EncryptionConfigScreen = (props: Props) => {
 		});
 
 		return (
-			<View style={{ flex: 1, borderColor: theme.dividerColor, borderWidth: 1, padding: 10, marginTop: 10, marginBottom: 10 }}>
+			<View style={{ flex: 1, flexBasis: 'auto', borderColor: theme.dividerColor, borderWidth: 1, padding: 10, marginTop: 10, marginBottom: 10 }}>
 				<View>{messageComps}</View>
 				<Text style={styles.normalText}>{_('Password:')}</Text>
 				<TextInput
@@ -201,6 +208,7 @@ const EncryptionConfigScreen = (props: Props) => {
 	const renderMasterPassword = () => {
 		if (!props.encryptionEnabled && !props.masterKeys.length) return null;
 
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 		const inputStyle: any = { flex: 1, marginRight: 10, color: theme.color };
 		inputStyle.borderBottomWidth = 1;
 		inputStyle.borderBottomColor = theme.dividerColor;
@@ -225,19 +233,22 @@ const EncryptionConfigScreen = (props: Props) => {
 		}
 	};
 
-
-
-	for (let i = 0; i < props.masterKeys.length; i++) {
+	for (let i = 0; i < props.masterKeys.filter(mk => masterKeyEnabled(mk)).length; i++) {
 		const mk = props.masterKeys[i];
-		mkComps.push(renderMasterKey(i + 1, mk));
+		mkComps.push(renderMasterKey(mk));
 
 		const idx = nonExistingMasterKeyIds.indexOf(mk.id);
 		if (idx >= 0) nonExistingMasterKeyIds.splice(idx, 1);
 	}
 
+	for (let i = 0; i < props.masterKeys.filter(mk => !masterKeyEnabled(mk)).length; i++) {
+		const mk = props.masterKeys[i];
+		disabledMkComps.push(renderMasterKey(mk));
+	}
+
 	const onToggleButtonClick = async () => {
 		if (props.encryptionEnabled) {
-			const ok = await dialogs.confirmRef(dialogBoxRef.current, _('Disabling encryption means *all* your notes and attachments are going to be re-synchronised and sent unencrypted to the sync target. Do you wish to continue?'));
+			const ok = await shim.showConfirmationDialog(_('Disabling encryption means *all* your notes and attachments are going to be re-synchronised and sent unencrypted to the sync target. Do you wish to continue?'));
 			if (!ok) return;
 
 			try {
@@ -262,7 +273,7 @@ const EncryptionConfigScreen = (props: Props) => {
 			rows.push(
 				<Text style={styles.normalText} key={id}>
 					{id}
-				</Text>
+				</Text>,
 			);
 		}
 
@@ -285,31 +296,40 @@ const EncryptionConfigScreen = (props: Props) => {
 	return (
 		<View style={rootStyle}>
 			<ScreenHeader title={_('Encryption Config')} />
-			<ScrollView style={styles.container}>
-				{
+			<ScrollView>
+				<View style={styles.container}>
 					<View style={{ backgroundColor: theme.warningBackgroundColor, paddingTop: 5, paddingBottom: 5, paddingLeft: 10, paddingRight: 10 }}>
 						<Text>{_('For more information about End-To-End Encryption (E2EE) and advice on how to enable it please check the documentation:')}</Text>
 						<TouchableOpacity
 							onPress={() => {
-								Linking.openURL('https://joplinapp.org/e2ee/');
+								Linking.openURL('https://joplinapp.org/help/apps/sync/e2ee');
 							}}
 						>
-							<Text>https://joplinapp.org/e2ee/</Text>
+							<Text>https://joplinapp.org/help/apps/sync/e2ee</Text>
 						</TouchableOpacity>
 					</View>
-				}
 
-				<Text style={styles.titleText}>{_('Status')}</Text>
-				<Text style={styles.normalText}>{_('Encryption is: %s', props.encryptionEnabled ? _('Enabled') : _('Disabled'))}</Text>
-				{decryptedItemsInfo}
-				{renderMasterPassword()}
-				{toggleButton}
-				{passwordPromptComp}
-				{mkComps}
-				{nonExistingMasterKeySection}
-				<View style={{ flex: 1, height: 20 }}></View>
+					<Text style={styles.titleText}>{_('Status')}</Text>
+					<Text style={styles.normalText}>{_('Encryption is: %s', props.encryptionEnabled ? _('Enabled') : _('Disabled'))}</Text>
+					{decryptedItemsInfo}
+					{renderMasterPassword()}
+					{toggleButton}
+					{passwordPromptComp}
+					{mkComps}
+					{nonExistingMasterKeySection}
+				</View>
+				<Divider />
+				<List.Accordion
+					title={_('Disabled keys')}
+					titleStyle={styles.titleText}
+					expanded={showDisabledKeys}
+					onPress={() => setShowDisabledKeys(st => !st)}
+				>
+					<View style={styles.disabledContainer}>
+						{disabledMkComps}
+					</View>
+				</List.Accordion>
 			</ScrollView>
-			<DialogBox ref={dialogBoxRef}/>
 		</View>
 	);
 };

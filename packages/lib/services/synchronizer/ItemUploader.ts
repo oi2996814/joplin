@@ -1,12 +1,12 @@
 import { ModelType } from '../../BaseModel';
 import { FileApi, MultiPutItem } from '../../file-api';
-import Logger from '../../Logger';
+import JoplinError from '../../JoplinError';
+import Logger from '@joplin/utils/Logger';
 import BaseItem from '../../models/BaseItem';
 import { BaseItemEntity } from '../database/types';
+import { ApiCallFunction } from './utils/types';
 
 const logger = Logger.create('ItemUploader');
-
-export type ApiCallFunction = (fnName: string, ...args: any[])=> Promise<any>;
 
 interface BatchItem extends MultiPutItem {
 	localItemUpdatedTime: number;
@@ -16,6 +16,7 @@ export default class ItemUploader {
 
 	private api_: FileApi;
 	private apiCall_: ApiCallFunction;
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	private preUploadedItems_: Record<string, any> = {};
 	private preUploadedItemUpdatedTimes_: Record<string, number> = {};
 	private maxBatchSize_ = 1 * 1024 * 1024; // 1MB;
@@ -33,7 +34,7 @@ export default class ItemUploader {
 		this.maxBatchSize_ = v;
 	}
 
-	public async serializeAndUploadItem(ItemClass: any, path: string, local: BaseItemEntity) {
+	public async serializeAndUploadItem(ItemClass: typeof BaseItem, path: string, local: BaseItemEntity) {
 		const preUploadItem = this.preUploadedItems_[path];
 		if (preUploadItem) {
 			if (this.preUploadedItemUpdatedTimes_[path] !== local.updated_time) {
@@ -45,7 +46,8 @@ export default class ItemUploader {
 				// the regular upload.
 				logger.warn(`Pre-uploaded item updated_time has changed. It is going to be re-uploaded again: ${path} (From ${this.preUploadedItemUpdatedTimes_[path]} to ${local.updated_time})`);
 			} else {
-				if (preUploadItem.error) throw new Error(preUploadItem.error.message ? preUploadItem.error.message : 'Unknown pre-upload error');
+				const error = preUploadItem.error;
+				if (error) throw new JoplinError(error.message ? error.message : 'Unknown pre-upload error', error.code);
 				return;
 			}
 		}

@@ -6,7 +6,7 @@ import { RouteType } from '../../utils/types';
 import { AppContext } from '../../utils/types';
 import { ErrorNotFound } from '../../utils/errors';
 import { AclAction } from '../../models/BaseModel';
-import uuidgen from '../../utils/uuidgen';
+import { uuidgen } from '@joplin/lib/uuid';
 
 const router = new Router(RouteType.Api);
 
@@ -17,6 +17,7 @@ async function fetchUser(path: SubPath, ctx: AppContext): Promise<User> {
 }
 
 async function postedUserFromContext(ctx: AppContext): Promise<User> {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	return ctx.joplin.models.user().fromApiInput(await bodyFields<any>(ctx.req));
 }
 
@@ -34,6 +35,7 @@ router.get('api/users/:id/public_key', async (path: SubPath, ctx: AppContext) =>
 	if (!user) return ''; // Don't throw an error to prevent polling the end point
 
 	const ppk = await ctx.joplin.models.user().publicPrivateKey(user.id);
+	if (!ppk) return '';
 
 	return {
 		id: ppk.id,

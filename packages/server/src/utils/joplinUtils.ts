@@ -14,22 +14,24 @@ import { Item, Share, Uuid } from '../services/database/types';
 import ItemModel from '../models/ItemModel';
 import { NoteEntity } from '@joplin/lib/services/database/types';
 import { formatDateTime } from './time';
-import { ErrorNotFound } from './errors';
+import { ErrorBadRequest, ErrorForbidden, ErrorNotFound } from './errors';
 import { MarkupToHtml } from '@joplin/renderer';
-import { OptionsResourceModel } from '@joplin/renderer/MarkupToHtml';
+import { OptionsResourceModel } from '@joplin/renderer/types';
 import { isValidHeaderIdentifier } from '@joplin/lib/services/e2ee/EncryptionService';
 const { DatabaseDriverNode } = require('@joplin/lib/database-driver-node.js');
 import { themeStyle } from '@joplin/lib/theme';
 import Setting from '@joplin/lib/models/Setting';
 import { Models } from '../models/factory';
 import MustacheService from '../services/MustacheService';
-import Logger from '@joplin/lib/Logger';
+import Logger from '@joplin/utils/Logger';
 import config from '../config';
+import { TreeItem } from '../models/ItemResourceModel';
 const { substrWithEllipsis } = require('@joplin/lib/string-utils');
 
 const logger = Logger.create('JoplinUtils');
 
 export interface FileViewerResponse {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	body: any;
 	mime: string;
 	size: number;
@@ -37,11 +39,14 @@ export interface FileViewerResponse {
 }
 
 interface ResourceInfo {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	localState: any;
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	item: any;
 }
 
 interface LinkedItemInfo {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	item: any;
 	file: File;
 }
@@ -92,10 +97,12 @@ export function isJoplinItemName(name: string): boolean {
 	return !!name.match(/^[0-9a-zA-Z]{32}\.md$/);
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 export async function unserializeJoplinItem(body: string): Promise<any> {
 	return BaseItem.unserialize(body);
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 export async function serializeJoplinItem(item: any): Promise<string> {
 	const ModelClass = BaseItem.itemClass(item);
 	return ModelClass.serialize(item);
@@ -118,6 +125,7 @@ export async function localFileFromUrl(url: string): Promise<string> {
 }
 
 async function getResourceInfos(linkedItemInfos: LinkedItemInfos): Promise<ResourceInfos> {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	const output: Record<string, any> = {};
 
 	for (const itemId of Object.keys(linkedItemInfos)) {
@@ -136,8 +144,8 @@ async function getResourceInfos(linkedItemInfos: LinkedItemInfos): Promise<Resou
 	return output;
 }
 
-async function noteLinkedItemInfos(userId: Uuid, itemModel: ItemModel, note: NoteEntity): Promise<LinkedItemInfos> {
-	const jopIds = await Note.linkedItemIds(note.body);
+async function noteLinkedItemInfos(userId: Uuid, itemModel: ItemModel, noteBody: string): Promise<LinkedItemInfos> {
+	const jopIds = await Note.linkedItemIds(noteBody);
 	const output: LinkedItemInfos = {};
 
 	for (const jopId of jopIds) {
@@ -158,6 +166,7 @@ async function renderResource(userId: string, resourceId: string, item: Item, co
 	// sufficient to download the resource. However, if we want a more user
 	// friendly download, we need to know the resource original name and mime
 	// type. So below, we try to get that information.
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	let jopItem: any = null;
 
 	try {
@@ -180,6 +189,7 @@ async function renderNote(share: Share, note: NoteEntity, resourceInfos: Resourc
 		ResourceModel: Resource as OptionsResourceModel,
 	});
 
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	const renderOptions: any = {
 		resources: resourceInfos,
 
@@ -190,11 +200,18 @@ async function renderNote(share: Share, note: NoteEntity, resourceInfos: Resourc
 			if (!item) throw new Error(`No such item in this note: ${itemId}`);
 
 			if (item.type_ === ModelType.Note) {
-				return '#';
+				return `${models_.share().shareUrl(share.owner_id, share.id)}?note_id=${item.id}&t=${item.updated_time}`;
 			} else if (item.type_ === ModelType.Resource) {
 				return `${models_.share().shareUrl(share.owner_id, share.id)}?resource_id=${item.id}&t=${item.updated_time}`;
 			} else {
-				throw new Error(`Unsupported item type: ${item.type_}`);
+				// In theory, there can only be links to notes or resources. But
+				// in practice nothing's stopping a plugin for example to create
+				// a link to a folder. In this case, we don't want to throw an
+				// exception as that would break rendering. Instead we just
+				// disable the link.
+				// https://github.com/laurent22/joplin/issues/6531
+				logger.warn(`Unsupported type in share ${share.id}. Item: ${itemId}`);
+				return '#';
 			}
 		},
 
@@ -203,6 +220,7 @@ async function renderNote(share: Share, note: NoteEntity, resourceInfos: Resourc
 		audioPlayerEnabled: false,
 		videoPlayerEnabled: false,
 		pdfViewerEnabled: false,
+		checkboxDisabled: true,
 
 		linkRenderingType: 2,
 	};
@@ -220,7 +238,7 @@ async function renderNote(share: Share, note: NoteEntity, resourceInfos: Resourc
 			note: {
 				...note,
 				bodyHtml: result.html,
-				updatedDateTime: formatDateTime(note.updated_time),
+				updatedDateTime: formatDateTime(note.user_updated_time),
 			},
 			cssStrings: result.cssStrings.join('\n'),
 			assetsJs: `
@@ -247,35 +265,124 @@ export function itemIsEncrypted(item: Item): boolean {
 	return isValidHeaderIdentifier(header);
 }
 
-export async function renderItem(userId: Uuid, item: Item, share: Share, query: Record<string, any>): Promise<FileViewerResponse> {
-	const rootNote: NoteEntity = models_.item().itemToJoplinItem(item); // await this.unserializeItem(content);
-	const linkedItemInfos: LinkedItemInfos = await noteLinkedItemInfos(userId, models_.item(), rootNote);
-	const resourceInfos = await getResourceInfos(linkedItemInfos);
+const findParentNote = async (itemTree: TreeItem, resourceId: string) => {
+	const find_ = (parentItem: TreeItem, currentTreeItems: TreeItem[], resourceId: string): TreeItem => {
+		for (const it of currentTreeItems) {
+			if (it.resource_id === resourceId) return parentItem;
+			const child = find_(it, it.children, resourceId);
+			if (child) return it;
+		}
+		return null;
+	};
 
+	const result = find_(itemTree, itemTree.children, resourceId);
+	if (!result) throw new ErrorBadRequest(`Cannot find parent of ${resourceId}`);
+
+	const item = await models_.item().loadWithContent(result.item_id);
+	if (!item) throw new ErrorNotFound(`Cannot load item with ID ${result.item_id}`);
+
+	return models_.item().itemToJoplinItem(item);
+};
+
+const isInTree = (itemTree: TreeItem, jopId: string) => {
+	if (itemTree.resource_id === jopId) return true;
+	for (const child of itemTree.children) {
+		if (child.resource_id === jopId) return true;
+		const found = isInTree(child, jopId);
+		if (found) return true;
+	}
+	return false;
+};
+
+interface RenderItemQuery {
+	resource_id?: string;
+	note_id?: string;
+}
+
+// "item" is always the item associated with the share (the "root item"). It may
+// be different from the item that will eventually get rendered - for example
+// for resources or linked notes.
+export async function renderItem(userId: Uuid, item: Item, share: Share, query: RenderItemQuery): Promise<FileViewerResponse> {
 	interface FileToRender {
 		item: Item;
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 		content: any;
 		jopItemId: string;
 	}
 
-	const fileToRender: FileToRender = {
-		item: item,
-		content: null as any,
-		jopItemId: rootNote.id,
-	};
+	const rootNote: NoteEntity = models_.item().itemToJoplinItem(item);
+	const itemTree = await models_.itemResource().itemTree(item.id, rootNote.id);
+
+	let linkedItemInfos: LinkedItemInfos = {};
+	let resourceInfos: ResourceInfos = {};
+	let fileToRender: FileToRender;
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+	let itemToRender: any = null;
 
 	if (query.resource_id) {
+		// ------------------------------------------------------------------------------------------
+		// Render a resource that is attached to a note
+		// ------------------------------------------------------------------------------------------
+
 		const resourceItem = await models_.item().loadByName(userId, resourceBlobPath(query.resource_id), { fields: ['*'], withContent: true });
-		fileToRender.item = resourceItem;
-		fileToRender.content = resourceItem.content;
-		fileToRender.jopItemId = query.resource_id;
+		if (!resourceItem) throw new ErrorNotFound(`No such resource: ${query.resource_id}`);
+
+		fileToRender = {
+			item: resourceItem,
+			content: resourceItem.content,
+			jopItemId: query.resource_id,
+		};
+
+		const parentNote = await findParentNote(itemTree, fileToRender.jopItemId);
+		linkedItemInfos = await noteLinkedItemInfos(userId, models_.item(), parentNote.body);
+		itemToRender = linkedItemInfos[fileToRender.jopItemId].item;
+	} else if (query.note_id) {
+		// ------------------------------------------------------------------------------------------
+		// Render a linked note
+		// ------------------------------------------------------------------------------------------
+
+
+		if (!share.recursive) throw new ErrorForbidden('This linked note has not been published');
+
+		const noteItem = await models_.item().loadByName(userId, `${query.note_id}.md`, { fields: ['*'], withContent: true });
+		if (!noteItem) throw new ErrorNotFound(`No such note: ${query.note_id}`);
+
+		fileToRender = {
+			item: noteItem,
+			content: noteItem.content,
+			jopItemId: query.note_id,
+		};
+
+		linkedItemInfos = await noteLinkedItemInfos(userId, models_.item(), noteItem.content.toString());
+		resourceInfos = await getResourceInfos(linkedItemInfos);
+		itemToRender = models_.item().itemToJoplinItem(noteItem);
+	} else {
+		// ------------------------------------------------------------------------------------------
+		// Render the root note
+		// ------------------------------------------------------------------------------------------
+
+		fileToRender = {
+			item: item,
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+			content: null as any,
+			jopItemId: rootNote.id,
+		};
+
+		linkedItemInfos = await noteLinkedItemInfos(userId, models_.item(), rootNote.body);
+		resourceInfos = await getResourceInfos(linkedItemInfos);
+		itemToRender = rootNote;
 	}
 
-	if (fileToRender.item !== item && !linkedItemInfos[fileToRender.jopItemId]) {
-		throw new ErrorNotFound(`Item "${fileToRender.jopItemId}" does not belong to this note`);
+	if (!itemToRender) throw new ErrorNotFound(`Cannot render item: ${item.id}: ${JSON.stringify(query)}`);
+
+	// Verify that the item we're going to render is indeed part of the item
+	// tree (i.e. it is either the root note, or one of the ancestor is the root
+	// note). This is for security reason - otherwise it would be possible to
+	// display any note by setting note_id to an arbitrary ID.
+	if (!isInTree(itemTree, fileToRender.jopItemId)) {
+		throw new ErrorNotFound(`Item "${fileToRender.jopItemId}" does not belong to this share`);
 	}
 
-	const itemToRender = fileToRender.item === item ? rootNote : linkedItemInfos[fileToRender.jopItemId].item;
 	const itemType: ModelType = itemToRender.type_;
 
 	if (itemType === ModelType.Resource) {

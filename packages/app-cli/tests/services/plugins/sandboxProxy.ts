@@ -1,22 +1,23 @@
 const sandboxProxy = require('@joplin/lib/services/plugins/sandboxProxy');
 import { setupDatabaseAndSynchronizer, switchClient } from '@joplin/lib/testing/test-utils';
 
-describe('services_plugins_sandboxProxy', function() {
+describe('services_plugins_sandboxProxy', () => {
 
-	beforeEach(async (done: Function) => {
+	beforeEach(async () => {
 		await setupDatabaseAndSynchronizer(1);
 		await switchClient(1);
-		done();
 	});
 
 	it('should create a new sandbox proxy', (async () => {
 		interface Result {
 			path: string;
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 			args: any[];
 		}
 
 		const results: Result[] = [];
 
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 		const target: any = (path: string, args: any[]) => {
 			results.push({ path, args });
 		};
@@ -35,11 +36,13 @@ describe('services_plugins_sandboxProxy', function() {
 	it('should allow importing a namespace', (async () => {
 		interface Result {
 			path: string;
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 			args: any[];
 		}
 
 		const results: Result[] = [];
 
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 		const target: any = (path: string, args: any[]) => {
 			results.push({ path, args });
 		};

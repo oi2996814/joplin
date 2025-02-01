@@ -1,6 +1,8 @@
 const { basicDelta } = require('./file-api');
 const { rtrimSlashes, ltrimSlashes } = require('./path-utils');
 const JoplinError = require('./JoplinError').default;
+const Setting = require('./models/Setting').default;
+const checkProviderIsSupported = require('./utils/webDAVUtils').default;
 
 class FileApiDriverWebDav {
 	constructor(api) {
@@ -105,6 +107,8 @@ class FileApiDriverWebDav {
 			output = href.substr(baseUrl.length);
 		} else if (href.indexOf(relativeBaseUrl) === 0) {
 			output = href.substr(relativeBaseUrl.length);
+		} else if (decodeURIComponent(href).indexOf(decodeURIComponent(relativeBaseUrl)) === 0) {
+			output = decodeURIComponent(href).substring(decodeURIComponent(relativeBaseUrl).length);
 		} else {
 			throw new Error(`href ${href} not in baseUrl ${baseUrl} nor relativeBaseUrl ${relativeBaseUrl}`);
 		}
@@ -223,6 +227,10 @@ class FileApiDriverWebDav {
 	async clearRoot() {
 		await this.delete('');
 		await this.mkdir('');
+	}
+
+	initialize() {
+		checkProviderIsSupported(Setting.value('sync.6.path'));
 	}
 }
 

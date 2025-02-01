@@ -1,44 +1,45 @@
 import Setting, { Env } from './models/Setting';
-import Logger, { TargetType, LoggerWrapper } from './Logger';
+import Logger, { TargetType, LoggerWrapper } from '@joplin/utils/Logger';
 import shim from './shim';
+const { setupProxySettings } = require('./shim-init-node');
 import BaseService from './services/BaseService';
-import reducer, { setStore } from './reducer';
-import KeychainServiceDriver from './services/keychain/KeychainServiceDriver.node';
-import KeychainServiceDriverDummy from './services/keychain/KeychainServiceDriver.dummy';
-import { _, setLocale } from './locale';
+import reducer, { getNotesParent, serializeNotesParent, setStore, State } from './reducer';
+import KeychainServiceDriverNode from './services/keychain/KeychainServiceDriver.node';
+import KeychainServiceDriverElectron from './services/keychain/KeychainServiceDriver.electron';
+import { setLocale } from './locale';
 import KvStore from './services/KvStore';
 import SyncTargetJoplinServer from './SyncTargetJoplinServer';
 import SyncTargetOneDrive from './SyncTargetOneDrive';
 import { createStore, applyMiddleware, Store } from 'redux';
-const { defaultState, stateUtils } = require('./reducer');
+import { defaultState, stateUtils } from './reducer';
 import JoplinDatabase from './JoplinDatabase';
-const { FoldersScreenUtils } = require('./folders-screen-utils.js');
+import { cancelTimers as folderScreenUtilsCancelTimers, refreshFolders, scheduleRefreshFolders } from './folders-screen-utils';
 const { DatabaseDriverNode } = require('./database-driver-node.js');
 import BaseModel from './BaseModel';
 import Folder from './models/Folder';
 import BaseItem from './models/BaseItem';
 import Note from './models/Note';
 import Tag from './models/Tag';
-const { splitCommandString } = require('./string-utils.js');
+import { splitCommandString } from '@joplin/utils';
+import { setDateFormat, setTimeFormat, setTimeLocale } from '@joplin/utils/time';
 import { reg } from './registry';
 import time from './time';
 import BaseSyncTarget from './BaseSyncTarget';
-const reduxSharedMiddleware = require('./components/shared/reduxSharedMiddleware');
-const os = require('os');
-const fs = require('fs-extra');
-import JoplinError from './JoplinError';
+import reduxSharedMiddleware from './components/shared/reduxSharedMiddleware';
+import dns = require('dns');
+import fs = require('fs-extra');
 const EventEmitter = require('events');
 const syswidecas = require('./vendor/syswide-cas');
 import SyncTargetRegistry from './SyncTargetRegistry';
-const SyncTargetFilesystem = require('./SyncTargetFilesystem.js');
+import SyncTargetFilesystem from './SyncTargetFilesystem';
 const SyncTargetNextcloud = require('./SyncTargetNextcloud.js');
 const SyncTargetWebDAV = require('./SyncTargetWebDAV.js');
 const SyncTargetDropbox = require('./SyncTargetDropbox.js');
 const SyncTargetAmazonS3 = require('./SyncTargetAmazonS3.js');
 import EncryptionService from './services/e2ee/EncryptionService';
 import ResourceFetcher from './services/ResourceFetcher';
-import SearchEngineUtils from './services/searchengine/SearchEngineUtils';
-import SearchEngine from './services/searchengine/SearchEngine';
+import SearchEngineUtils from './services/search/SearchEngineUtils';
+import SearchEngine, { ComplexTerm, ProcessResultsRow } from './services/search/SearchEngine';
 import RevisionService from './services/RevisionService';
 import ResourceService from './services/ResourceService';
 import DecryptionWorker from './services/DecryptionWorker';
@@ -47,38 +48,60 @@ import MigrationService from './services/MigrationService';
 import ShareService from './services/share/ShareService';
 import handleSyncStartupOperation from './services/synchronizer/utils/handleSyncStartupOperation';
 import SyncTargetJoplinCloud from './SyncTargetJoplinCloud';
-const { toSystemSlashes } = require('./path-utils');
 const { setAutoFreeze } = require('immer');
 import { getEncryptionEnabled } from './services/synchronizer/syncInfoUtils';
 import { loadMasterKeysFromSettings, migrateMasterPassword } from './services/e2ee/utils';
 import SyncTargetNone from './SyncTargetNone';
 import { setRSA } from './services/e2ee/ppk';
 import RSA from './services/e2ee/RSA.node';
+import Resource from './models/Resource';
+import { ProfileConfig } from './services/profileConfig/types';
+import initProfile from './services/profileConfig/initProfile';
+import { parseShareCache } from './services/share/reducer';
+import RotatingLogs from './RotatingLogs';
+import { NoteEntity } from './services/database/types';
+import { join } from 'path';
+import processStartFlags from './utils/processStartFlags';
+import { setupAutoDeletion } from './services/trash/permanentlyDeleteOldItems';
+import determineProfileAndBaseDir from './determineBaseAppDirs';
+import NavService from './services/NavService';
 
 const appLogger: LoggerWrapper = Logger.create('App');
 
 // const ntpClient = require('./vendor/ntp-client');
 // ntpClient.dgram = require('dgram');
 
-interface StartOptions {
+export interface StartOptions {
 	keychainEnabled?: boolean;
+	setupGlobalLogger?: boolean;
+	rootProfileDir?: string;
+	appName?: string;
+	appId?: string;
 }
+export const safeModeFlagFilename = 'force-safe-mode-on-next-start';
 
 export default class BaseApplication {
 
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	private eventEmitter_: any;
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	private scheduleAutoAddResourcesIID_: any = null;
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	private database_: any = null;
+	private profileConfig_: ProfileConfig = null;
 
-	protected showStackTraces_: boolean = false;
-	protected showPromptString_: boolean = false;
+	protected showStackTraces_ = false;
+	protected showPromptString_ = false;
 
 	// Note: this is basically a cache of state.selectedFolderId. It should *only*
 	// be derived from the state and not set directly since that would make the
 	// state and UI out of sync.
-	private currentFolder_: any = null;
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+	protected currentFolder_: any = null;
 
-	protected store_: Store<any> = null;
+	protected store_: Store<State> = null;
+
+	private rotatingLogs: RotatingLogs;
 
 	public constructor() {
 		this.eventEmitter_ = new EventEmitter();
@@ -93,7 +116,7 @@ export default class BaseApplication {
 		await ResourceFetcher.instance().destroy();
 		await SearchEngine.instance().destroy();
 		await DecryptionWorker.instance().destroy();
-		await FoldersScreenUtils.cancelTimers();
+		await folderScreenUtilsCancelTimers();
 		await BaseItem.revisionService_.cancelTimers();
 		await ResourceService.instance().cancelTimers();
 		await reg.cancelTimers();
@@ -138,9 +161,10 @@ export default class BaseApplication {
 		this.switchCurrentFolder(newFolder);
 	}
 
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	public switchCurrentFolder(folder: any) {
 		if (!this.hasGui()) {
-			this.currentFolder_ = Object.assign({}, folder);
+			this.currentFolder_ = { ...folder };
 			Setting.setValue('activeFolderId', folder ? folder.id : '');
 		} else {
 			this.dispatch({
@@ -152,145 +176,27 @@ export default class BaseApplication {
 
 	// Handles the initial flags passed to main script and
 	// returns the remaining args.
-	private async handleStartFlags_(argv: string[], setDefaults: boolean = true) {
-		const matched: any = {};
-		argv = argv.slice(0);
-		argv.splice(0, 2); // First arguments are the node executable, and the node JS file
+	private async handleStartFlags_(argv: string[], setDefaults = true) {
+		const flags = await processStartFlags(argv, setDefaults);
 
-		while (argv.length) {
-			const arg = argv[0];
-			const nextArg = argv.length >= 2 ? argv[1] : null;
-
-			if (arg == '--profile') {
-				if (!nextArg) throw new JoplinError(_('Usage: %s', '--profile <dir-path>'), 'flagError');
-				matched.profileDir = nextArg;
-				argv.splice(0, 2);
-				continue;
-			}
-
-			if (arg == '--no-welcome') {
-				matched.welcomeDisabled = true;
-				argv.splice(0, 1);
-				continue;
-			}
-
-			if (arg == '--env') {
-				if (!nextArg) throw new JoplinError(_('Usage: %s', '--env <dev|prod>'), 'flagError');
-				matched.env = nextArg;
-				argv.splice(0, 2);
-				continue;
-			}
-
-			if (arg == '--is-demo') {
-				Setting.setConstant('isDemo', true);
-				argv.splice(0, 1);
-				continue;
-			}
-
-			if (arg == '--open-dev-tools') {
-				Setting.setConstant('flagOpenDevTools', true);
-				argv.splice(0, 1);
-				continue;
-			}
-
-			if (arg == '--debug') {
-				// Currently only handled by ElectronAppWrapper (isDebugMode property)
-				argv.splice(0, 1);
-				continue;
-			}
-
-			if (arg == '--update-geolocation-disabled') {
-				Note.updateGeolocationEnabled_ = false;
-				argv.splice(0, 1);
-				continue;
-			}
-
-			if (arg == '--stack-trace-enabled') {
-				this.showStackTraces_ = true;
-				argv.splice(0, 1);
-				continue;
-			}
-
-			if (arg == '--log-level') {
-				if (!nextArg) throw new JoplinError(_('Usage: %s', '--log-level <none|error|warn|info|debug>'), 'flagError');
-				matched.logLevel = Logger.levelStringToId(nextArg);
-				argv.splice(0, 2);
-				continue;
-			}
-
-			if (arg.indexOf('-psn') === 0) {
-				// Some weird flag passed by macOS - can be ignored.
-				// https://github.com/laurent22/joplin/issues/480
-				// https://stackoverflow.com/questions/10242115
-				argv.splice(0, 1);
-				continue;
-			}
-
-			if (arg === '--enable-logging') {
-				// Electron-specific flag used for debugging - ignore it
-				argv.splice(0, 1);
-				continue;
-			}
-
-			if (arg === '--dev-plugins') {
-				Setting.setConstant('startupDevPlugins', nextArg.split(',').map(p => p.trim()));
-				argv.splice(0, 2);
-				continue;
-			}
-
-			if (arg.indexOf('--remote-debugging-port=') === 0) {
-				// Electron-specific flag used for debugging - ignore it. Electron expects this flag in '--x=y' form, a single string.
-				argv.splice(0, 1);
-				continue;
-			}
-
-			if (arg === '--no-sandbox') {
-				// Electron-specific flag for running the app without chrome-sandbox
-				// Allows users to use it as a workaround for the electron+AppImage issue
-				// https://github.com/laurent22/joplin/issues/2246
-				argv.splice(0, 1);
-				continue;
-			}
-
-			if (arg.indexOf('--user-data-dir=') === 0) {
-				// Electron-specific flag. Allows users to run the app with chromedriver.
-				argv.splice(0, 1);
-				continue;
-			}
-
-			if (arg.indexOf('--enable-features=') === 0) {
-				// Electron-specific flag - ignore it
-				// Allows users to run the app on native wayland
-				argv.splice(0, 1);
-				continue;
-			}
-
-			if (arg.indexOf('--ozone-platform=') === 0) {
-				// Electron-specific flag - ignore it
-				// Allows users to run the app on native wayland
-				argv.splice(0, 1);
-				continue;
-			}
-
-			if (arg.length && arg[0] == '-') {
-				throw new JoplinError(_('Unknown flag: %s', arg), 'flagError');
-			} else {
-				break;
-			}
+		if (flags.matched.showStackTraces) {
+			this.showStackTraces_ = true;
 		}
 
-		if (setDefaults) {
-			if (!matched.logLevel) matched.logLevel = Logger.LEVEL_INFO;
-			if (!matched.env) matched.env = 'prod';
-			if (!matched.devPlugins) matched.devPlugins = [];
+		// Work around issues with ipv6 resolution -- default to ipv4first.
+		// (possibly incorrect URL serialization see https://github.com/mswjs/msw/issues/1388#issuecomment-1241180921).
+		// See also https://github.com/node-fetch/node-fetch/issues/1624#issuecomment-1407717012
+		if (flags.matched.allowOverridingDnsResultOrder) {
+			dns.setDefaultResultOrder('ipv4first');
 		}
 
 		return {
-			matched: matched,
-			argv: argv,
+			matched: flags.matched,
+			argv: flags.argv,
 		};
 	}
 
+	// eslint-disable-next-line @typescript-eslint/ban-types -- Old code before rule was applied
 	public on(eventName: string, callback: Function) {
 		return this.eventEmitter_.on(eventName, callback);
 	}
@@ -300,7 +206,8 @@ export default class BaseApplication {
 		process.exit(code);
 	}
 
-	public async refreshNotes(state: any, useSelectedNoteId: boolean = false, noteHash: string = '') {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+	public async refreshNotes(state: any, useSelectedNoteId = false, noteHash = '') {
 		let parentType = state.notesParentType;
 		let parentId = null;
 
@@ -332,8 +239,9 @@ export default class BaseApplication {
 			parentId: parentId,
 		});
 
-		let notes = [];
-		let highlightedWords = [];
+		let notes: NoteEntity[] = [];
+		let highlightedWords: (ComplexTerm | string)[] = [];
+		let searchResults: ProcessResultsRow[] = [];
 
 		if (parentId) {
 			if (parentType === Folder.modelType()) {
@@ -342,7 +250,9 @@ export default class BaseApplication {
 				notes = await Tag.notes(parentId, options);
 			} else if (parentType === BaseModel.TYPE_SEARCH) {
 				const search = BaseModel.byId(state.searches, parentId);
-				notes = await SearchEngineUtils.notesForQuery(search.query_pattern, true);
+				const response = await SearchEngineUtils.notesForQuery(search.query_pattern, true, { appendWildCards: true });
+				notes = response.notes;
+				searchResults = response.results;
 				const parsedQuery = await SearchEngine.instance().parseQuery(search.query_pattern);
 				highlightedWords = SearchEngine.instance().allParsedQueryTerms(parsedQuery);
 			} else if (parentType === BaseModel.TYPE_SMART_FILTER) {
@@ -353,6 +263,11 @@ export default class BaseApplication {
 		this.store().dispatch({
 			type: 'SET_HIGHLIGHTED',
 			words: highlightedWords,
+		});
+
+		this.store().dispatch({
+			type: 'SEARCH_RESULTS_SET',
+			value: searchResults,
 		});
 
 		this.store().dispatch({
@@ -396,6 +311,7 @@ export default class BaseApplication {
 		}
 	}
 
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	private resourceFetcher_downloadComplete(event: any) {
 		if (event.encrypted) {
 			void DecryptionWorker.instance().scheduleStart();
@@ -406,7 +322,8 @@ export default class BaseApplication {
 		ResourceFetcher.instance().scheduleAutoAddResources();
 	}
 
-	reducerActionToString(action: any) {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+	public reducerActionToString(action: any) {
 		const o = [action.type];
 		if ('id' in action) o.push(action.id);
 		if ('noteId' in action) o.push(action.noteId);
@@ -427,6 +344,7 @@ export default class BaseApplication {
 	}
 
 	public generalMiddlewareFn() {
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 		const middleware = (store: any) => (next: any) => (action: any) => {
 			return this.generalMiddleware(store, next, action);
 		};
@@ -434,10 +352,15 @@ export default class BaseApplication {
 		return middleware;
 	}
 
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	protected async applySettingsSideEffects(action: any = null) {
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 		const sideEffects: any = {
 			'dateFormat': async () => {
 				time.setLocale(Setting.value('locale'));
+				setTimeLocale(Setting.value('locale'));
+				setDateFormat(Setting.value('dateFormat'));
+				setTimeFormat(Setting.value('timeFormat'));
 				time.setDateFormat(Setting.value('dateFormat'));
 				time.setTimeFormat(Setting.value('timeFormat'));
 			},
@@ -451,6 +374,14 @@ export default class BaseApplication {
 					if (!f) continue;
 					syswidecas.addCAs(f);
 				}
+			},
+			'net.proxyEnabled': async () => {
+				setupProxySettings({
+					maxConcurrentConnections: Setting.value('sync.maxConcurrentConnections'),
+					proxyTimeout: Setting.value('net.proxyTimeout'),
+					proxyEnabled: Setting.value('net.proxyEnabled'),
+					proxyUrl: Setting.value('net.proxyUrl'),
+				});
 			},
 
 			// Note: this used to run when "encryption.enabled" was changed, but
@@ -487,6 +418,9 @@ export default class BaseApplication {
 		sideEffects['locale'] = sideEffects['dateFormat'];
 		sideEffects['encryption.passwordCache'] = sideEffects['syncInfoCache'];
 		sideEffects['encryption.masterPassword'] = sideEffects['syncInfoCache'];
+		sideEffects['sync.maxConcurrentConnections'] = sideEffects['net.proxyEnabled'];
+		sideEffects['sync.proxyTimeout'] = sideEffects['net.proxyEnabled'];
+		sideEffects['sync.proxyUrl'] = sideEffects['net.proxyEnabled'];
 
 		if (action) {
 			const effect = sideEffects[action.key];
@@ -498,36 +432,45 @@ export default class BaseApplication {
 		}
 	}
 
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	protected async generalMiddleware(store: any, next: any, action: any) {
 		// appLogger.debug('Reducer action', this.reducerActionToString(action));
 
 		const result = next(action);
 		let refreshNotes = false;
-		let refreshFolders: boolean | string = false;
-		// let refreshTags = false;
+		let doRefreshFolders: boolean | string = false;
 		let refreshNotesUseSelectedNoteId = false;
 		let refreshNotesHash = '';
 
-		await reduxSharedMiddleware(store, next, action);
-		const newState = store.getState();
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+		await reduxSharedMiddleware(store, next, action, ((action: any) => { this.dispatch(action); }) as any);
+		const newState = store.getState() as State;
 
 		if (this.hasGui() && ['NOTE_UPDATE_ONE', 'NOTE_DELETE', 'FOLDER_UPDATE_ONE', 'FOLDER_DELETE'].indexOf(action.type) >= 0) {
-			if (!(await reg.syncTarget().syncStarted())) void reg.scheduleSync(30 * 1000, { syncSteps: ['update_remote', 'delete_remote'] });
+			if (!(await reg.syncTarget().syncStarted())) void reg.scheduleSync(15 * 1000, { syncSteps: ['update_remote', 'delete_remote'] });
 			SearchEngine.instance().scheduleSyncTables();
 		}
 
 		// Don't add FOLDER_UPDATE_ALL as refreshFolders() is calling it too, which
 		// would cause the sidebar to refresh all the time.
 		if (this.hasGui() && ['FOLDER_UPDATE_ONE'].indexOf(action.type) >= 0) {
-			refreshFolders = true;
+			doRefreshFolders = true;
 		}
 
-		if (action.type == 'HISTORY_BACKWARD' || action.type == 'HISTORY_FORWARD') {
+		// If a note gets deleted to the trash or gets restored we refresh the folders so that the
+		// note count can be updated.
+		if (this.hasGui() && ['NOTE_UPDATE_ONE'].includes(action.type)) {
+			if (action.changedFields && action.changedFields.includes('deleted_time')) {
+				doRefreshFolders = true;
+			}
+		}
+
+		if (action.type === 'HISTORY_BACKWARD' || action.type === 'HISTORY_FORWARD') {
 			refreshNotes = true;
 			refreshNotesUseSelectedNoteId = true;
 		}
 
-		if (action.type == 'HISTORY_BACKWARD' || action.type == 'HISTORY_FORWARD' || action.type == 'FOLDER_SELECT' || action.type === 'FOLDER_DELETE' || action.type === 'FOLDER_AND_NOTE_SELECT' || (action.type === 'SEARCH_UPDATE' && newState.notesParentType === 'Folder')) {
+		if (action.type === 'HISTORY_BACKWARD' || action.type === 'HISTORY_FORWARD' || action.type === 'FOLDER_SELECT' || action.type === 'FOLDER_DELETE' || action.type === 'FOLDER_AND_NOTE_SELECT' || (action.type === 'SEARCH_UPDATE' && newState.notesParentType === 'Folder')) {
 			Setting.setValue('activeFolderId', newState.selectedFolderId);
 			this.currentFolder_ = newState.selectedFolderId ? await Folder.load(newState.selectedFolderId) : null;
 			refreshNotes = true;
@@ -538,23 +481,40 @@ export default class BaseApplication {
 			}
 		}
 
-		if (this.hasGui() && (action.type == 'NOTE_IS_INSERTING_NOTES' && !action.value)) {
+		if (['HISTORY_BACKWARD', 'HISTORY_FORWARD', 'FOLDER_SELECT', 'TAG_SELECT', 'SMART_FILTER_SELECT', 'FOLDER_DELETE', 'FOLDER_AND_NOTE_SELECT'].includes(action.type) || (action.type === 'SEARCH_UPDATE' && newState.notesParentType === 'Folder')) {
+			Setting.setValue('notesParent', serializeNotesParent(getNotesParent(newState)));
+		}
+
+		if (this.hasGui() && (action.type === 'NOTE_IS_INSERTING_NOTES' && !action.value)) {
 			refreshNotes = true;
 		}
 
-		if (this.hasGui() && ((action.type == 'SETTING_UPDATE_ONE' && action.key == 'uncompletedTodosOnTop') || action.type == 'SETTING_UPDATE_ALL')) {
+		if (this.hasGui() && ((action.type === 'SETTING_UPDATE_ONE' && action.key === 'uncompletedTodosOnTop') || action.type === 'SETTING_UPDATE_ALL')) {
 			refreshNotes = true;
 		}
 
-		if (this.hasGui() && ((action.type == 'SETTING_UPDATE_ONE' && action.key == 'showCompletedTodos') || action.type == 'SETTING_UPDATE_ALL')) {
+		if (this.hasGui() && ((action.type === 'SETTING_UPDATE_ONE' && action.key === 'showCompletedTodos') || action.type === 'SETTING_UPDATE_ALL')) {
 			refreshNotes = true;
 		}
 
-		if (this.hasGui() && ((action.type == 'SETTING_UPDATE_ONE' && action.key.indexOf('notes.sortOrder') === 0) || action.type == 'SETTING_UPDATE_ALL')) {
+		if (this.hasGui() && ((action.type === 'SETTING_UPDATE_ONE' && action.key.indexOf('notes.sortOrder') === 0) || action.type === 'SETTING_UPDATE_ALL')) {
 			refreshNotes = true;
 		}
 
-		if (action.type == 'SMART_FILTER_SELECT') {
+		if (action.type === 'SETTING_UPDATE_ONE' && action.key === 'locale') {
+			refreshNotes = true;
+			doRefreshFolders = 'now';
+		}
+
+		if (action.type === 'SMART_FILTER_SELECT') {
+			refreshNotes = true;
+			refreshNotesUseSelectedNoteId = true;
+		}
+
+		// Switching windows can also change which note(s) and which note parent type is selected.
+		// Refreshing notes after switching windows helps ensure that the selected note/tags/other state
+		// is correct for the current window.
+		if (action.type === 'WINDOW_FOCUS' && action.lastWindowId !== action.windowId) {
 			refreshNotes = true;
 			refreshNotesUseSelectedNoteId = true;
 		}
@@ -567,11 +527,11 @@ export default class BaseApplication {
 			refreshNotes = true;
 		}
 
-		if (action.type == 'SEARCH_SELECT' || action.type === 'SEARCH_DELETE') {
+		if (action.type === 'SEARCH_SELECT' || action.type === 'SEARCH_DELETE') {
 			refreshNotes = true;
 		}
 
-		if (action.type == 'NOTE_TAG_REMOVE') {
+		if (action.type === 'NOTE_TAG_REMOVE') {
 			if (newState.notesParentType === 'Tag' && newState.selectedTagId === action.item.id) {
 				if (newState.notes.length === newState.selectedNoteIds.length) {
 					await this.refreshCurrentFolder();
@@ -591,23 +551,23 @@ export default class BaseApplication {
 				action.changedFields.includes('encryption_applied') ||
 				action.changedFields.includes('is_conflict')
 			) {
-				refreshFolders = true;
+				doRefreshFolders = true;
 			}
 		}
 
 		if (action.type === 'NOTE_DELETE') {
-			refreshFolders = true;
+			doRefreshFolders = true;
 		}
 
-		if (this.hasGui() && action.type == 'SETTING_UPDATE_ALL') {
-			refreshFolders = 'now';
+		if (this.hasGui() && action.type === 'SETTING_UPDATE_ALL') {
+			doRefreshFolders = 'now';
 		}
 
-		if (this.hasGui() && action.type == 'SETTING_UPDATE_ONE' && (
+		if (this.hasGui() && action.type === 'SETTING_UPDATE_ONE' && (
 			action.key.indexOf('folders.sortOrder') === 0 ||
-			action.key == 'showNoteCounts' ||
-			action.key == 'showCompletedTodos')) {
-			refreshFolders = 'now';
+			action.key === 'showNoteCounts' ||
+			action.key === 'showCompletedTodos')) {
+			doRefreshFolders = 'now';
 		}
 
 		if (this.hasGui() && action.type === 'SYNC_GOT_ENCRYPTED_ITEM') {
@@ -618,37 +578,47 @@ export default class BaseApplication {
 			void ResourceFetcher.instance().autoAddResources();
 		}
 
-		if (action.type == 'SETTING_UPDATE_ONE') {
+		if (action.type === 'SETTING_UPDATE_ONE') {
 			await this.applySettingsSideEffects(action);
-		} else if (action.type == 'SETTING_UPDATE_ALL') {
+		} else if (action.type === 'SETTING_UPDATE_ALL') {
 			await this.applySettingsSideEffects();
 		}
 
-		if (refreshFolders) {
-			if (refreshFolders === 'now') {
-				await FoldersScreenUtils.refreshFolders();
+		if (doRefreshFolders) {
+			if (doRefreshFolders === 'now') {
+				// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+				await refreshFolders((action: any) => this.dispatch(action), newState.selectedFolderId);
 			} else {
-				await FoldersScreenUtils.scheduleRefreshFolders();
+				// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+				await scheduleRefreshFolders((action: any) => this.dispatch(action), newState.selectedFolderId);
 			}
 		}
 		return result;
 	}
 
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	public dispatch(action: any) {
 		if (this.store()) return this.store().dispatch(action);
 	}
 
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	public reducer(state: any = defaultState, action: any) {
 		return reducer(state, action);
 	}
 
 	public initRedux() {
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 		this.store_ = createStore(this.reducer, applyMiddleware(this.generalMiddlewareFn() as any));
 		setStore(this.store_);
+
+		this.store_.dispatch({
+			type: 'PROFILE_CONFIG_SET',
+			value: this.profileConfig_,
+		});
+
 		BaseModel.dispatch = this.store().dispatch;
-		FoldersScreenUtils.dispatch = this.store().dispatch;
-		// reg.dispatch = this.store().dispatch;
 		BaseSyncTarget.dispatch = this.store().dispatch;
+		NavService.dispatch = this.store().dispatch;
 		DecryptionWorker.instance().dispatch = this.store().dispatch;
 		ResourceFetcher.instance().dispatch = this.store().dispatch;
 		ShareService.instance().initialize(this.store(), EncryptionService.instance());
@@ -657,8 +627,6 @@ export default class BaseApplication {
 	public deinitRedux() {
 		this.store_ = null;
 		BaseModel.dispatch = function() {};
-		FoldersScreenUtils.dispatch = function() {};
-		// reg.dispatch = function() {};
 		BaseSyncTarget.dispatch = function() {};
 		DecryptionWorker.instance().dispatch = function() {};
 		ResourceFetcher.instance().dispatch = function() {};
@@ -671,7 +639,8 @@ export default class BaseApplication {
 
 		flagContent = flagContent.trim();
 
-		let flags = splitCommandString(flagContent);
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+		let flags: any = splitCommandString(flagContent);
 		flags.splice(0, 0, 'cmd');
 		flags.splice(0, 0, 'node');
 
@@ -680,23 +649,25 @@ export default class BaseApplication {
 		return flags.matched;
 	}
 
-	public determineProfileDir(initArgs: any) {
-		let output = '';
-
-		if (initArgs.profileDir) {
-			output = initArgs.profileDir;
-		} else if (process && process.env && process.env.PORTABLE_EXECUTABLE_DIR) {
-			output = `${process.env.PORTABLE_EXECUTABLE_DIR}/JoplinProfile`;
-		} else {
-			output = `${os.homedir()}/.config/${Setting.value('appName')}`;
-		}
-
-		return toSystemSlashes(output, 'linux');
+	protected startRotatingLogMaintenance(profileDir: string) {
+		this.rotatingLogs = new RotatingLogs(profileDir);
+		const processLogs = async () => {
+			try {
+				await this.rotatingLogs.cleanActiveLogFile();
+				await this.rotatingLogs.deleteNonActiveLogFiles();
+			} catch (error) {
+				appLogger.error(error);
+			}
+		};
+		shim.setTimeout(() => { void processLogs(); }, 60000);
+		shim.setInterval(() => { void processLogs(); }, 24 * 60 * 60 * 1000);
 	}
 
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	public async start(argv: string[], options: StartOptions = null): Promise<any> {
 		options = {
 			keychainEnabled: true,
+			setupGlobalLogger: true,
 			...options,
 		};
 
@@ -706,27 +677,33 @@ export default class BaseApplication {
 		let initArgs = startFlags.matched;
 		if (argv.length) this.showPromptString_ = false;
 
-		let appName = initArgs.env == 'dev' ? 'joplindev' : 'joplin';
-		if (Setting.value('appId').indexOf('-desktop') >= 0) appName += '-desktop';
+		let appName = options.appName;
+		if (!appName) {
+			appName = initArgs.env === 'dev' ? 'joplindev' : 'joplin';
+			if (Setting.value('appId').indexOf('-desktop') >= 0) appName += '-desktop';
+		}
 		Setting.setConstant('appName', appName);
 
 		// https://immerjs.github.io/immer/docs/freezing
 		setAutoFreeze(initArgs.env === 'dev');
 
-		const profileDir = this.determineProfileDir(initArgs);
+		const { rootProfileDir, homeDir } = determineProfileAndBaseDir(options.rootProfileDir ?? initArgs.profileDir, appName);
+		const { profileDir, profileConfig, isSubProfile } = await initProfile(rootProfileDir);
+		this.profileConfig_ = profileConfig;
+
 		const resourceDirName = 'resources';
 		const resourceDir = `${profileDir}/${resourceDirName}`;
 		const tempDir = `${profileDir}/tmp`;
 		const cacheDir = `${profileDir}/cache`;
 
-		Setting.setConstant('env', initArgs.env);
-		Setting.setConstant('profileDir', profileDir);
+		Setting.setConstant('env', initArgs.env as Env);
 		Setting.setConstant('resourceDirName', resourceDirName);
 		Setting.setConstant('resourceDir', resourceDir);
 		Setting.setConstant('tempDir', tempDir);
 		Setting.setConstant('pluginDataDir', `${profileDir}/plugin-data`);
 		Setting.setConstant('cacheDir', cacheDir);
-		Setting.setConstant('pluginDir', `${profileDir}/plugins`);
+		Setting.setConstant('pluginDir', `${rootProfileDir}/plugins`);
+		Setting.setConstant('homeDir', homeDir);
 
 		SyncTargetRegistry.addClass(SyncTargetNone);
 		SyncTargetRegistry.addClass(SyncTargetFilesystem);
@@ -755,20 +732,17 @@ export default class BaseApplication {
 		await shim.fsDriver().removeAllThatStartWith(profileDir, 'edit-');
 
 		const extraFlags = await this.readFlagsFromFile(`${profileDir}/flags.txt`);
-		initArgs = Object.assign(initArgs, extraFlags);
+		initArgs = { ...initArgs, ...extraFlags };
 
+		const globalLogger = Logger.globalLogger;
 
-
-
-		const globalLogger = new Logger();
-		globalLogger.addTarget(TargetType.File, { path: `${profileDir}/log.txt` });
-		if (Setting.value('appType') === 'desktop') {
-			globalLogger.addTarget(TargetType.Console);
+		if (options.setupGlobalLogger) {
+			globalLogger.addTarget(TargetType.File, { path: `${profileDir}/log.txt` });
+			if (Setting.value('appType') === 'desktop') {
+				globalLogger.addTarget(TargetType.Console);
+			}
+			globalLogger.setLevel(initArgs.logLevel);
 		}
-		globalLogger.setLevel(initArgs.logLevel);
-		Logger.initializeGlobalLogger(globalLogger);
-
-
 
 		reg.setLogger(Logger.create('') as Logger);
 		// reg.dispatch = () => {};
@@ -777,6 +751,7 @@ export default class BaseApplication {
 
 
 		appLogger.info(`Profile directory: ${profileDir}`);
+		appLogger.info(`Root profile directory: ${rootProfileDir}`);
 
 		this.database_ = new JoplinDatabase(new DatabaseDriverNode());
 		this.database_.setLogExcludedQueryTypes(['SELECT']);
@@ -788,38 +763,63 @@ export default class BaseApplication {
 
 		reg.setDb(this.database_);
 		BaseModel.setDb(this.database_);
+		KvStore.instance().setDb(reg.db());
 
 		setRSA(RSA);
 
-		await loadKeychainServiceAndSettings(options.keychainEnabled ? KeychainServiceDriver : KeychainServiceDriverDummy);
+		await loadKeychainServiceAndSettings(
+			options.keychainEnabled ? [KeychainServiceDriverElectron, KeychainServiceDriverNode] : [],
+		);
 		await migrateMasterPassword();
 		await handleSyncStartupOperation();
 
 		appLogger.info(`Client ID: ${Setting.value('clientId')}`);
 
-		if (Setting.value('firstStart')) {
-			const locale = shim.detectAndSetLocale(Setting);
-			reg.logger().info(`First start: detected locale as ${locale}`);
+		BaseItem.syncShareCache = parseShareCache(Setting.value('sync.shareCache'));
 
+		if (initArgs?.isSafeMode) {
+			Setting.setValue('isSafeMode', true);
+		}
+
+		const safeModeFlagFile = join(profileDir, safeModeFlagFilename);
+		if (await fs.pathExists(safeModeFlagFile) && fs.readFileSync(safeModeFlagFile, 'utf8') === 'true') {
+			appLogger.info(`Safe mode enabled because of file: ${safeModeFlagFile}`);
+			Setting.setValue('isSafeMode', true);
+			fs.removeSync(safeModeFlagFile);
+		}
+
+		if (Setting.value('firstStart')) {
+
+			// detectAndSetLocale sets the locale to the system default locale.
+			// Not calling it when a new profile is created ensures that the
+			// the language set by the user is not overridden by the system
+			// default language.
+			if (!Setting.value('isSubProfile')) {
+				const locale = shim.detectAndSetLocale(Setting);
+				reg.logger().info(`First start: detected locale as ${locale}`);
+			}
 			Setting.skipDefaultMigrations();
 
 			if (Setting.value('env') === 'dev') {
-				Setting.setValue('showTrayIcon', 0);
-				Setting.setValue('autoUpdateEnabled', 0);
+				Setting.setValue('showTrayIcon', false);
+				Setting.setValue('autoUpdateEnabled', false);
 				Setting.setValue('sync.interval', 3600);
 			}
 
-			Setting.setValue('firstStart', 0);
+			Setting.setValue('firstStart', false);
 		} else {
 			Setting.applyDefaultMigrations();
-			setLocale(Setting.value('locale'));
+			Setting.applyUserSettingMigration();
 		}
+
+		setLocale(Setting.value('locale'));
 
 		if (Setting.value('env') === Env.Dev) {
 			// Setting.setValue('sync.10.path', 'https://api.joplincloud.com');
 			// Setting.setValue('sync.10.userContentPath', 'https://joplinusercontent.com');
 			Setting.setValue('sync.10.path', 'http://api.joplincloud.local:22300');
 			Setting.setValue('sync.10.userContentPath', 'http://joplinusercontent.local:22300');
+			Setting.setValue('sync.10.website', 'http://joplincloud.local:22300');
 		}
 
 		// For now always disable fuzzy search due to performance issues:
@@ -837,10 +837,12 @@ export default class BaseApplication {
 		}
 
 		if ('welcomeDisabled' in initArgs) Setting.setValue('welcome.enabled', !initArgs.welcomeDisabled);
+		if (isSubProfile) Setting.setValue('welcome.enabled', false);
 
 		if (!Setting.value('api.token')) {
 			void EncryptionService.instance()
 				.generateApiToken()
+			// eslint-disable-next-line promise/prefer-await-to-then -- Old code before rule was applied
 				.then((token: string) => {
 					Setting.setValue('api.token', token);
 				});
@@ -851,10 +853,10 @@ export default class BaseApplication {
 
 		BaseItem.revisionService_ = RevisionService.instance();
 
-		KvStore.instance().setDb(reg.db());
 
 		BaseItem.encryptionService_ = EncryptionService.instance();
 		BaseItem.shareService_ = ShareService.instance();
+		Resource.shareService_ = ShareService.instance();
 		DecryptionWorker.instance().setLogger(globalLogger);
 		DecryptionWorker.instance().setEncryptionService(EncryptionService.instance());
 		DecryptionWorker.instance().setKvStore(KvStore.instance());
@@ -877,6 +879,8 @@ export default class BaseApplication {
 		if (currentFolderId) currentFolder = await Folder.load(currentFolderId);
 		if (!currentFolder) currentFolder = await Folder.defaultFolder();
 		Setting.setValue('activeFolderId', currentFolder ? currentFolder.id : '');
+
+		await setupAutoDeletion();
 
 		await MigrationService.instance().run();
 

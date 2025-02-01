@@ -1,22 +1,28 @@
-import { TagEntity } from '../services/database/types';
+import { TagEntity, TagsWithNoteCountEntity } from '../services/database/types';
 
-import BaseModel from '../BaseModel';
+import BaseModel, { DeleteOptions } from '../BaseModel';
 import BaseItem from './BaseItem';
 import NoteTag from './NoteTag';
 import Note from './Note';
 import { _ } from '../locale';
+import ActionLogger from '../utils/ActionLogger';
 
 export default class Tag extends BaseItem {
-	static tableName() {
+	public static tableName() {
 		return 'tags';
 	}
 
-	static modelType() {
+	public static modelType() {
 		return BaseModel.TYPE_TAG;
 	}
 
-	static async noteIds(tagId: string) {
-		const rows = await this.db().selectAll('SELECT note_id FROM note_tags WHERE tag_id = ?', [tagId]);
+	public static async noteIds(tagId: string) {
+		const rows = await this.db().selectAll(`
+			SELECT note_id
+			FROM note_tags
+			LEFT JOIN notes ON notes.id = note_tags.note_id
+			WHERE tag_id = ? AND notes.deleted_time = 0
+		`, [tagId]);
 		const output = [];
 		for (let i = 0; i < rows.length; i++) {
 			output.push(rows[i].note_id);
@@ -24,7 +30,8 @@ export default class Tag extends BaseItem {
 		return output;
 	}
 
-	static async notes(tagId: string, options: any = null) {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+	public static async notes(tagId: string, options: any = null) {
 		if (options === null) options = {};
 
 		const noteIds = await this.noteIds(tagId);
@@ -32,24 +39,29 @@ export default class Tag extends BaseItem {
 
 		return Note.previews(
 			null,
-			Object.assign({}, options, {
-				conditions: [`id IN ("${noteIds.join('","')}")`],
-			})
+			{ ...options, conditions: [`id IN (${this.escapeIdsForSql(noteIds)})`] },
 		);
 	}
 
 	// Untag all the notes and delete tag
-	static async untagAll(tagId: string) {
+	public static async untagAll(tagId: string) {
 		const noteTags = await NoteTag.modelSelectAll('SELECT id FROM note_tags WHERE tag_id = ?', [tagId]);
 		for (let i = 0; i < noteTags.length; i++) {
-			await NoteTag.delete(noteTags[i].id);
+			await NoteTag.delete(noteTags[i].id, { sourceDescription: 'untagAll/disassociate note' });
 		}
 
-		await Tag.delete(tagId);
+		await Tag.delete(tagId, { sourceDescription: 'untagAll/delete tag' });
 	}
 
-	static async delete(id: string, options: any = null) {
-		if (!options) options = {};
+	public static async delete(id: string, options: DeleteOptions = {}) {
+		const actionLogger = ActionLogger.from(options.sourceDescription);
+		const tagTitle = (await Tag.load(id)).title;
+		actionLogger.addDescription(`tag title: ${JSON.stringify(tagTitle)}`);
+
+		options = {
+			...options,
+			sourceDescription: actionLogger,
+		};
 
 		await super.delete(id, options);
 
@@ -59,7 +71,7 @@ export default class Tag extends BaseItem {
 		});
 	}
 
-	static async addNote(tagId: string, noteId: string) {
+	public static async addNote(tagId: string, noteId: string) {
 		const hasIt = await this.hasNote(tagId, noteId);
 		if (hasIt) return;
 
@@ -89,46 +101,62 @@ export default class Tag extends BaseItem {
 		return output;
 	}
 
-	static async removeNote(tagId: string, noteId: string) {
+	public static async removeNote(tagId: string, noteId: string) {
+		const tag = await Tag.load(tagId);
+
+		const actionLogger = ActionLogger.from(`Tag/removeNote - tag: ${tag.title}`);
+
 		const noteTags = await NoteTag.modelSelectAll('SELECT id FROM note_tags WHERE tag_id = ? and note_id = ?', [tagId, noteId]);
 		for (let i = 0; i < noteTags.length; i++) {
-			await NoteTag.delete(noteTags[i].id);
+			await NoteTag.delete(noteTags[i].id, { sourceDescription: actionLogger.clone() });
 		}
 
 		this.dispatch({
 			type: 'NOTE_TAG_REMOVE',
-			item: await Tag.load(tagId),
+			item: tag,
 		});
 	}
 
-	static loadWithCount(tagId: string) {
+	public static loadWithCount(tagId: string) {
 		const sql = 'SELECT * FROM tags_with_note_count WHERE id = ?';
 		return this.modelSelectOne(sql, [tagId]);
 	}
 
-	static async hasNote(tagId: string, noteId: string) {
-		const r = await this.db().selectOne('SELECT note_id FROM note_tags WHERE tag_id = ? AND note_id = ? LIMIT 1', [tagId, noteId]);
+	public static async hasNote(tagId: string, noteId: string) {
+		const r = await this.db().selectOne(`
+			SELECT note_id
+			FROM note_tags
+			LEFT JOIN notes ON notes.id = note_tags.note_id
+			WHERE tag_id = ? AND note_id = ? AND deleted_time = 0
+			LIMIT 1
+		`, [tagId, noteId]);
 		return !!r;
 	}
 
-	static async allWithNotes() {
+	public static async allWithNotes(): Promise<TagsWithNoteCountEntity[]> {
 		return await Tag.modelSelectAll('SELECT * FROM tags_with_note_count');
 	}
 
-	static async searchAllWithNotes(options: any) {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+	public static async searchAllWithNotes(options: any) {
 		if (!options) options = {};
 		if (!options.conditions) options.conditions = [];
 		options.conditions.push('id IN (SELECT distinct id FROM tags_with_note_count)');
 		return this.search(options);
 	}
 
-	static async tagsByNoteId(noteId: string) {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+	public static async tagsByNoteId(noteId: string, options: any = null) {
+		options = {
+			...options,
+		};
+
 		const tagIds = await NoteTag.tagIdsByNoteId(noteId);
 		if (!tagIds.length) return [];
-		return this.modelSelectAll(`SELECT * FROM tags WHERE id IN ("${tagIds.join('","')}")`);
+		return this.modelSelectAll(`SELECT ${options.fields ? this.db().escapeFields(options.fields) : '*'} FROM tags WHERE id IN (${this.escapeIdsForSql(tagIds)})`);
 	}
 
-	static async commonTagsByNoteIds(noteIds: string[]) {
+	public static async commonTagsByNoteIds(noteIds: string[]) {
 		if (!noteIds || noteIds.length === 0) {
 			return [];
 		}
@@ -140,20 +168,22 @@ export default class Tag extends BaseItem {
 				break;
 			}
 		}
-		return this.modelSelectAll(`SELECT * FROM tags WHERE id IN ("${commonTagIds.join('","')}")`);
+		return this.modelSelectAll(`SELECT * FROM tags WHERE id IN (${this.escapeIdsForSql(commonTagIds)})`);
 	}
 
-	static async loadByTitle(title: string) {
-		return this.loadByField('title', title, { caseInsensitive: true });
+	public static async loadByTitle(title: string): Promise<TagEntity> {
+		// Case insensitive doesn't work with especial Unicode characters like Ö
+		const lowercaseTitle = title.toLowerCase();
+		return this.loadByField('title', lowercaseTitle, { caseInsensitive: true });
 	}
 
-	static async addNoteTagByTitle(noteId: string, tagTitle: string) {
+	public static async addNoteTagByTitle(noteId: string, tagTitle: string) {
 		let tag = await this.loadByTitle(tagTitle);
 		if (!tag) tag = await Tag.save({ title: tagTitle }, { userSideValidation: true });
 		return await this.addNote(tag.id, noteId);
 	}
 
-	static async setNoteTagsByTitles(noteId: string, tagTitles: string[]) {
+	public static async setNoteTagsByTitles(noteId: string, tagTitles: string[]) {
 		const previousTags = await this.tagsByNoteId(noteId);
 		const addedTitles = [];
 
@@ -173,7 +203,7 @@ export default class Tag extends BaseItem {
 		}
 	}
 
-	static async setNoteTagsByIds(noteId: string, tagIds: string[]) {
+	public static async setNoteTagsByIds(noteId: string, tagIds: string[]) {
 		const previousTags = await this.tagsByNoteId(noteId);
 		const addedIds = [];
 
@@ -190,11 +220,10 @@ export default class Tag extends BaseItem {
 		}
 	}
 
-	static async save(o: TagEntity, options: any = null) {
-		options = Object.assign({}, {
-			dispatchUpdateAction: true,
-			userSideValidation: false,
-		}, options);
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+	public static async save(o: TagEntity, options: any = null) {
+		options = { dispatchUpdateAction: true,
+			userSideValidation: false, ...options };
 
 		if (options.userSideValidation) {
 			if ('title' in o) {
@@ -205,6 +234,7 @@ export default class Tag extends BaseItem {
 			}
 		}
 
+		// eslint-disable-next-line promise/prefer-await-to-then -- Old code before rule was applied
 		return super.save(o, options).then((tag: TagEntity) => {
 			if (options.dispatchUpdateAction) {
 				this.dispatch({

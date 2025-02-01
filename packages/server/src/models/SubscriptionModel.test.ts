@@ -3,7 +3,7 @@ import { AccountType } from './UserModel';
 import { MB } from '../utils/bytes';
 import { getCanShareFolder, getMaxItemSize } from './utils/user';
 
-describe('SubscriptionModel', function() {
+describe('SubscriptionModel', () => {
 
 	beforeAll(async () => {
 		await beforeAllDb('SubscriptionModel');
@@ -17,13 +17,13 @@ describe('SubscriptionModel', function() {
 		await beforeEachDb();
 	});
 
-	test('should create a user and subscription', async function() {
+	test('should create a user and subscription', async () => {
 		await models().subscription().saveUserAndSubscription(
 			'toto@example.com',
 			'Toto',
 			AccountType.Pro,
 			'STRIPE_USER_ID',
-			'STRIPE_SUB_ID'
+			'STRIPE_SUB_ID',
 		);
 
 		const user = await models().user().loadByEmail('toto@example.com');
@@ -40,13 +40,13 @@ describe('SubscriptionModel', function() {
 		expect(sub.user_id).toBe(user.id);
 	});
 
-	test('should enable and allow the user to upload if a payment is successful', async function() {
+	test('should enable and allow the user to upload if a payment is successful', async () => {
 		let { user } = await models().subscription().saveUserAndSubscription(
 			'toto@example.com',
 			'Toto',
 			AccountType.Pro,
 			'STRIPE_USER_ID',
-			'STRIPE_SUB_ID'
+			'STRIPE_SUB_ID',
 		);
 
 		await models().user().save({

@@ -21,6 +21,7 @@ function newService(): CommandService {
 	return service;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 function createCommand(name: string, options: any): TestCommand {
 	const declaration: CommandDeclaration = {
 		name: name,
@@ -30,6 +31,7 @@ function createCommand(name: string, options: any): TestCommand {
 		execute: options.execute,
 	};
 
+	if (options.getPriority) runtime.getPriority = options.getPriority;
 	if (options.enabledCondition) runtime.enabledCondition = options.enabledCondition;
 
 	return { declaration, runtime };
@@ -37,18 +39,21 @@ function createCommand(name: string, options: any): TestCommand {
 
 function registerCommand(service: CommandService, cmd: TestCommand) {
 	service.registerDeclaration(cmd.declaration);
-	service.registerRuntime(cmd.declaration.name, cmd.runtime);
+	return service.registerRuntime(cmd.declaration.name, cmd.runtime);
 }
 
-describe('services_CommandService', function() {
+const registerSecondaryRuntime = (service: CommandService, commandName: string, runtime: CommandRuntime) => {
+	return service.registerRuntime(commandName, runtime, true);
+};
 
-	beforeEach(async (done) => {
+describe('services_CommandService', () => {
+
+	beforeEach(async () => {
 		KeymapService.destroyInstance();
 		KeymapService.instance().initialize();
 
 		await setupDatabaseAndSynchronizer(1);
 		await switchClient(1);
-		done();
 	});
 
 	it('should create toolbar button infos from commands', (async () => {
@@ -160,9 +165,39 @@ describe('services_CommandService', function() {
 		}
 	}));
 
+	it('should support multiple runtimes for a command', async () => {
+		const service = newService();
+
+		const execute1 = jest.fn();
+		const execute2 = jest.fn();
+
+		const firstRuntime = registerCommand(service, createCommand('test1', {
+			execute: execute1,
+			getPriority: () => 1,
+		}));
+
+		registerSecondaryRuntime(service, 'test1', {
+			execute: execute2,
+		});
+
+		await service.execute('test1');
+
+		// Should prefer commands with a positive specified priority
+		expect(execute2).not.toHaveBeenCalled();
+		expect(execute1).toHaveBeenCalledTimes(1);
+
+		// Should be possible to deregister just one runtime
+		firstRuntime.deregister();
+
+		await service.execute('test1');
+		expect(execute1).toHaveBeenCalledTimes(1);
+		expect(execute2).toHaveBeenCalledTimes(1);
+	});
+
 	it('should create menu items from commands', (async () => {
 		const service = newService();
 		const utils = new MenuUtils(service);
+		const locale = 'fr_FR';
 
 		registerCommand(service, createCommand('test1', {
 			execute: () => {},
@@ -178,7 +213,7 @@ describe('services_CommandService', function() {
 			clickedCommands.push(commandName);
 		};
 
-		const menuItems = utils.commandsToMenuItems(['test1', 'test2'], onClick);
+		const menuItems = utils.commandsToMenuItems(['test1', 'test2'], onClick, locale);
 
 		menuItems.test1.click();
 		menuItems.test2.click();
@@ -186,7 +221,10 @@ describe('services_CommandService', function() {
 		expect(clickedCommands.join('_')).toBe('test1_test2');
 
 		// Also check that the same commands always return strictly the same menu
-		expect(utils.commandsToMenuItems(['test1', 'test2'], onClick)).toBe(utils.commandsToMenuItems(['test1', 'test2'], onClick));
+		expect(utils.commandsToMenuItems(['test1', 'test2'], onClick, locale)).toBe(utils.commandsToMenuItems(['test1', 'test2'], onClick, locale));
+
+		// And check that if the locale changes, new menu items are returned
+		expect(utils.commandsToMenuItems(['test1', 'test2'], onClick, locale)).not.toBe(utils.commandsToMenuItems(['test1', 'test2'], onClick, 'en_GB'));
 	}));
 
 	it('should give menu item props from state', (async () => {
@@ -234,6 +272,7 @@ describe('services_CommandService', function() {
 		let propValue = null;
 
 		registerCommand(service, createCommand('test1', {
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 			execute: (_context: any, greeting: string) => {
 				propValue = greeting;
 			},
@@ -259,5 +298,39 @@ describe('services_CommandService', function() {
 		await expectNotThrow(async () => service.isEnabled('test1', { cond1: true, cond2: false }));
 	}));
 
+	it('commands should allow specifying an icon', () => {
+		const service = newService();
 
+		const iconName = 'fas fa-check';
+		registerCommand(service, {
+			declaration: {
+				name: 'test-command-with-icon',
+				label: 'Adding icons to commands',
+				iconName,
+			},
+			runtime: {
+				execute: async () => {},
+			},
+		});
+
+		const command = service.commandByName('test-command-with-icon');
+		expect(command.declaration.iconName).toBe(iconName);
+	});
+
+	it('commands should have a non-empty default icon', () => {
+		const service = newService();
+
+		registerCommand(service, {
+			declaration: {
+				name: 'test1',
+				label: 'Test toolbar icon',
+			},
+			runtime: {
+				execute: async () => {},
+			},
+		});
+
+		const command = service.commandByName('test1');
+		expect(command.declaration.iconName).toBe('fas fa-cog');
+	});
 });

@@ -1,25 +1,29 @@
-import Logger from '../Logger';
+import Logger from '@joplin/utils/Logger';
 import Setting from '../models/Setting';
 import shim from '../shim';
-import { fileExtension, basename, toSystemSlashes } from '../path-utils';
+import { basename, toSystemSlashes } from '../path-utils';
 import time from '../time';
 import { NoteEntity } from './database/types';
-
 import Note from '../models/Note';
+import { openFileWithExternalEditor } from './ExternalEditWatcher/utils';
 const EventEmitter = require('events');
-const { splitCommandString } = require('../string-utils');
-const spawn = require('child_process').spawn;
 const chokidar = require('chokidar');
 const { ErrorNotFound } = require('./rest/utils/errors');
 
 export default class ExternalEditWatcher {
 
+	// eslint-disable-next-line @typescript-eslint/ban-types -- Old code before rule was applied
 	private dispatch: Function;
+	// eslint-disable-next-line @typescript-eslint/ban-types -- Old code before rule was applied
 	private bridge_: Function;
 	private logger_: Logger = new Logger();
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	private watcher_: any = null;
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	private eventEmitter_: any = new EventEmitter();
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	private skipNextChangeEvent_: any = {};
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	private chokidar_: any = chokidar;
 
 	private static instance_: ExternalEditWatcher;
@@ -30,6 +34,7 @@ export default class ExternalEditWatcher {
 		return this.instance_;
 	}
 
+	// eslint-disable-next-line @typescript-eslint/ban-types -- Old code before rule was applied
 	public initialize(bridge: Function, dispatch: Function) {
 		this.bridge_ = bridge;
 		this.dispatch = dispatch;
@@ -43,13 +48,16 @@ export default class ExternalEditWatcher {
 		};
 
 		return {
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 			openAndWatch: async (args: any) => {
 				const note = await loadNote(args.noteId);
 				return this.openAndWatch(note);
 			},
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 			stopWatching: async (args: any) => {
 				return this.stopWatching(args.noteId);
 			},
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 			noteIsWatched: async (args: any) => {
 				const note = await loadNote(args.noteId);
 				return this.noteIsWatched(note);
@@ -57,27 +65,29 @@ export default class ExternalEditWatcher {
 		};
 	}
 
-	tempDir() {
+	public tempDir() {
 		return Setting.value('profileDir');
 	}
 
-	on(eventName: string, callback: Function) {
+	// eslint-disable-next-line @typescript-eslint/ban-types -- Old code before rule was applied
+	public on(eventName: string, callback: Function) {
 		return this.eventEmitter_.on(eventName, callback);
 	}
 
-	off(eventName: string, callback: Function) {
+	// eslint-disable-next-line @typescript-eslint/ban-types -- Old code before rule was applied
+	public off(eventName: string, callback: Function) {
 		return this.eventEmitter_.removeListener(eventName, callback);
 	}
 
-	setLogger(l: Logger) {
+	public setLogger(l: Logger) {
 		this.logger_ = l;
 	}
 
-	logger() {
+	public logger() {
 		return this.logger_;
 	}
 
-	watch(fileToWatch: string) {
+	public watch(fileToWatch: string) {
 		if (!this.chokidar_) return;
 
 		if (!this.watcher_) {
@@ -133,26 +143,20 @@ export default class ExternalEditWatcher {
 							if (!noteContent) this.logger().warn(`ExternalEditWatcher: Could not re-read note - user might have purposely deleted note content: ${id}`);
 						}
 
+						this.logger().debug('ExternalEditWatcher: Updating note object.');
+
 						const updatedNote = await Note.unserializeForEdit(noteContent);
 						updatedNote.id = id;
 						updatedNote.parent_id = note.parent_id;
 						await Note.save(updatedNote);
 						this.eventEmitter_.emit('noteChange', { id: updatedNote.id, note: updatedNote });
+					} else {
+						this.logger().debug('ExternalEditWatcher: Skipping this event.');
 					}
 
 					this.skipNextChangeEvent_ = {};
 				} else if (event === 'error') {
 					this.logger().error('ExternalEditWatcher: error');
-				}
-			});
-			// Hack to support external watcher on some linux applications (gedit, gvim, etc)
-			// taken from https://github.com/paulmillr/chokidar/issues/591
-			this.watcher_.on('raw', async (event: string, _path: string, options: any) => {
-				const watchedPath: string = options.watchedPath;
-				this.logger().debug(`ExternalEditWatcher: Raw event: ${event}: ${watchedPath}`);
-				if (event === 'rename') {
-					this.watcher_.unwatch(watchedPath);
-					this.watcher_.add(watchedPath);
 				}
 			});
 		} else {
@@ -162,11 +166,12 @@ export default class ExternalEditWatcher {
 		return this.watcher_;
 	}
 
-	noteIdToFilePath_(noteId: string) {
+	private noteIdToFilePath_(noteId: string) {
 		return `${this.tempDir()}/edit-${noteId}.md`;
 	}
 
-	noteFilePathToId_(path: string) {
+	private noteFilePathToId_(path: string) {
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 		let id: any = toSystemSlashes(path, 'linux').split('/');
 		if (!id.length) throw new Error(`Invalid path: ${path}`);
 		id = id[id.length - 1];
@@ -176,7 +181,7 @@ export default class ExternalEditWatcher {
 		return id[1];
 	}
 
-	watchedFiles() {
+	public watchedFiles() {
 		if (!this.watcher_) return [];
 
 		const output = [];
@@ -194,7 +199,7 @@ export default class ExternalEditWatcher {
 		return output;
 	}
 
-	noteIsWatched(note: NoteEntity) {
+	public noteIsWatched(note: NoteEntity) {
 		if (!this.watcher_) return false;
 
 		const noteFilename = basename(this.noteIdToFilePath_(note.id));
@@ -213,69 +218,7 @@ export default class ExternalEditWatcher {
 		return false;
 	}
 
-	textEditorCommand() {
-		const editorCommand = Setting.value('editor');
-		if (!editorCommand) return null;
-
-		const s = splitCommandString(editorCommand, { handleEscape: false });
-		const path = s.splice(0, 1);
-		if (!path.length) throw new Error(`Invalid editor command: ${editorCommand}`);
-
-		return {
-			path: path[0],
-			args: s,
-		};
-	}
-
-	async spawnCommand(path: string, args: string[], options: any) {
-		return new Promise((resolve, reject) => {
-			// App bundles need to be opened using the `open` command.
-			// Additional args can be specified after --args, and the
-			// -n flag is needed to ensure that the app is always launched
-			// with the arguments. Without it, if the app is already opened,
-			// it will just bring it to the foreground without opening the file.
-			// So the full command is:
-			//
-			// open -n /path/to/editor.app --args -app-flag -bla /path/to/file.md
-			//
-			if (shim.isMac() && fileExtension(path) === 'app') {
-				args = args.slice();
-				args.splice(0, 0, '--args');
-				args.splice(0, 0, path);
-				args.splice(0, 0, '-n');
-				path = 'open';
-			}
-
-			const wrapError = (error: any) => {
-				if (!error) return error;
-				const msg = error.message ? [error.message] : [];
-				msg.push(`Command was: "${path}" ${args.join(' ')}`);
-				error.message = msg.join('\n\n');
-				return error;
-			};
-
-			try {
-				const subProcess = spawn(path, args, options);
-
-				const iid = shim.setInterval(() => {
-					if (subProcess && subProcess.pid) {
-						this.logger().debug(`Started editor with PID ${subProcess.pid}`);
-						shim.clearInterval(iid);
-						resolve(null);
-					}
-				}, 100);
-
-				subProcess.on('error', (error: any) => {
-					shim.clearInterval(iid);
-					reject(wrapError(error));
-				});
-			} catch (error) {
-				throw wrapError(error);
-			}
-		});
-	}
-
-	async openAndWatch(note: NoteEntity) {
+	public async openAndWatch(note: NoteEntity) {
 		if (!note || !note.id) {
 			this.logger().warn('ExternalEditWatcher: Cannot open note: ', note);
 			return;
@@ -285,13 +228,7 @@ export default class ExternalEditWatcher {
 		if (!filePath) return;
 		this.watch(filePath);
 
-		const cmd = this.textEditorCommand();
-		if (!cmd) {
-			this.bridge_().openExternal(`file://${filePath}`);
-		} else {
-			cmd.args.push(filePath);
-			await this.spawnCommand(cmd.path, cmd.args, { detached: true });
-		}
+		await openFileWithExternalEditor(filePath, this.bridge_());
 
 		this.dispatch({
 			type: 'NOTE_FILE_WATCHER_ADD',
@@ -301,7 +238,7 @@ export default class ExternalEditWatcher {
 		this.logger().info(`ExternalEditWatcher: Started watching ${filePath}`);
 	}
 
-	async stopWatching(noteId: string) {
+	public async stopWatching(noteId: string) {
 		if (!noteId) return;
 
 		const filePath = this.noteIdToFilePath_(noteId);
@@ -314,7 +251,7 @@ export default class ExternalEditWatcher {
 		this.logger().info(`ExternalEditWatcher: Stopped watching ${filePath}`);
 	}
 
-	async stopWatchingAll() {
+	public async stopWatchingAll() {
 		const filePaths = this.watchedFiles();
 		for (let i = 0; i < filePaths.length; i++) {
 			await shim.fsDriver().remove(filePaths[i]);
@@ -328,7 +265,7 @@ export default class ExternalEditWatcher {
 		});
 	}
 
-	async updateNoteFile(note: NoteEntity) {
+	public async updateNoteFile(note: NoteEntity) {
 		if (!this.noteIsWatched(note)) return;
 
 		if (!note || !note.id) {
@@ -345,7 +282,7 @@ export default class ExternalEditWatcher {
 		await this.writeNoteToFile_(note);
 	}
 
-	async writeNoteToFile_(note: NoteEntity) {
+	private async writeNoteToFile_(note: NoteEntity) {
 		if (!note || !note.id) {
 			this.logger().warn('ExternalEditWatcher: Cannot update note file: ', note);
 			return null;
