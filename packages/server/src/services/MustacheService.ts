@@ -1,16 +1,20 @@
 import * as Mustache from 'mustache';
 import * as fs from 'fs-extra';
 import { extname } from 'path';
-import config from '../config';
+import config, { fullVersionString } from '../config';
 import { filename } from '@joplin/lib/path-utils';
 import { NotificationView } from '../utils/types';
 import { User } from '../services/database/types';
-import { makeUrl, UrlType } from '../utils/routeUtils';
+import { makeUrl, SubPath, UrlType } from '../utils/routeUtils';
 import MarkdownIt = require('markdown-it');
 import { headerAnchor } from '@joplin/renderer';
 import { _ } from '@joplin/lib/locale';
+import { adminDashboardUrl, adminEmailsUrl, adminTasksUrl, adminUserDeletionsUrl, adminUsersUrl, homeUrl, itemsUrl, adminReportUrl } from '../utils/urlUtils';
+import { MenuItem, setSelectedMenu } from '../utils/views/menu';
+import { ReportType } from './reports/types';
 
 export interface RenderOptions {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	partials?: any;
 	cssFiles?: string[];
 	jsFiles?: string[];
@@ -23,10 +27,13 @@ export interface View {
 	path: string;
 	layout?: string;
 	navbar?: boolean;
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	content?: any;
 	partials?: string[];
 	cssFiles?: string[];
 	jsFiles?: string[];
+	strings?: Record<string, string>; // List of translatable strings
+	sidebarMenu?: MenuItem[];
 }
 
 interface GlobalParams {
@@ -35,8 +42,9 @@ interface GlobalParams {
 	prefersDarkEnabled?: boolean;
 	notifications?: NotificationView[];
 	hasNotifications?: boolean;
+	fullYear?: number;
 	owner?: User;
-	appVersion?: string;
+	fullVersionString?: string;
 	appName?: string;
 	termsUrl?: string;
 	privacyUrl?: string;
@@ -46,8 +54,15 @@ interface GlobalParams {
 	isJoplinCloud?: boolean;
 	impersonatorAdminSessionId?: string;
 	csrfTag?: string;
+	s?: Record<string, string>; // List of translatable strings
+	isAdminPage?: boolean;
+	adminMenu?: MenuItem[];
+	navbarMenu?: MenuItem[];
+	currentPath?: SubPath;
+	appShortName?: string;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 export function isView(o: any): boolean {
 	if (typeof o !== 'object' || !o) return false;
 	return 'path' in o && 'name' in o;
@@ -57,7 +72,7 @@ export default class MustacheService {
 
 	private viewDir_: string;
 	private baseAssetUrl_: string;
-	private prefersDarkEnabled_: boolean = true;
+	private prefersDarkEnabled_ = true;
 	private partials_: Record<string, string> = {};
 	private fileContentCache_: Record<string, string> = {};
 
@@ -93,17 +108,83 @@ export default class MustacheService {
 		return `${config().layoutDir}/${name}.mustache`;
 	}
 
+	private makeAdminMenu(selectedPath: SubPath): MenuItem[] {
+		const output: MenuItem[] = [
+			{
+				title: _('General'),
+				children: [
+					{
+						title: _('Dashboard'),
+						url: adminDashboardUrl(),
+					},
+					{
+						title: _('Users'),
+						url: adminUsersUrl(),
+					},
+					{
+						title: _('User deletions'),
+						url: adminUserDeletionsUrl(),
+					},
+					{
+						title: _('Tasks'),
+						url: adminTasksUrl(),
+					},
+					{
+						title: _('Emails'),
+						url: adminEmailsUrl(),
+					},
+					{
+						title: _('Reports'),
+						url: adminReportUrl(ReportType.UserActivity),
+					},
+				],
+			},
+		];
+
+		return setSelectedMenu(selectedPath, output);
+	}
+
+	private makeNavbar(selectedPath: SubPath, isAdmin: boolean): MenuItem[] {
+		let output: MenuItem[] = [
+			{
+				title: _('Home'),
+				url: homeUrl(),
+			},
+		];
+
+		if (isAdmin) {
+			output = output.concat([
+				{
+					title: _('Items'),
+					url: itemsUrl(),
+				},
+				{
+					title: _('Admin'),
+					url: adminDashboardUrl(),
+					icon: 'fas fa-hammer',
+					selectedCondition: (selectedPath: SubPath) => {
+						return selectedPath.schema.startsWith('admin/') || selectedPath.schema === 'admin';
+					},
+				},
+			]);
+		}
+
+		return setSelectedMenu(selectedPath, output);
+	}
+
 	private get defaultLayoutOptions(): GlobalParams {
 		return {
 			baseUrl: config().baseUrl,
 			joplinAppBaseUrl: config().joplinAppBaseUrl,
 			prefersDarkEnabled: this.prefersDarkEnabled_,
-			appVersion: config().appVersion,
+			fullVersionString: fullVersionString(config()),
 			appName: config().appName,
 			termsUrl: config().termsEnabled ? makeUrl(UrlType.Terms) : '',
 			privacyUrl: config().termsEnabled ? makeUrl(UrlType.Privacy) : '',
 			showErrorStackTraces: config().showErrorStackTraces,
 			isJoplinCloud: config().isJoplinCloud,
+			fullYear: (new Date()).getFullYear(),
+			appShortName: config().isJoplinCloud ? 'cloud' : 'server',
 		};
 	}
 
@@ -159,7 +240,7 @@ export default class MustacheService {
 					...view.content,
 					global: globalParams,
 				},
-				this.partials_
+				this.partials_,
 			);
 		} else if (ext === '.md') {
 			const markdownIt = new MarkdownIt({
@@ -177,21 +258,23 @@ export default class MustacheService {
 		throw new Error(`Unsupported view extension: ${ext}`);
 	}
 
+	private formatPageName(name: string): string {
+		return name.replace(/[/\\]/g, '-');
+	}
+
 	public async renderView(view: View, globalParams: GlobalParams = null): Promise<string> {
 		const cssFiles = this.resolvesFilePaths('css', view.cssFiles || []);
 		const jsFiles = this.resolvesFilePaths('js', view.jsFiles || []);
 		const filePath = await this.viewFilePath(view.path);
+		const isAdminPage = view.path.startsWith('/admin/');
 
 		globalParams = {
 			...this.defaultLayoutOptions,
 			...globalParams,
+			adminMenu: globalParams ? this.makeAdminMenu(globalParams.currentPath) : null,
+			navbarMenu: this.makeNavbar(globalParams?.currentPath, globalParams?.owner ? !!globalParams.owner.is_admin : false),
 			userDisplayName: this.userDisplayName(globalParams ? globalParams.owner : null),
-		};
-
-		const contentHtml = await this.renderFileContent(filePath, view, globalParams);
-
-		const layoutView: any = {
-			global: globalParams,
+			isAdminPage,
 			s: {
 				home: _('Home'),
 				users: _('Users'),
@@ -200,13 +283,22 @@ export default class MustacheService {
 				tasks: _('Tasks'),
 				help: _('Help'),
 				logout: _('Logout'),
+				admin: _('Admin'),
 			},
-			pageName: view.name,
+		};
+
+		const contentHtml = await this.renderFileContent(filePath, view, globalParams);
+
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+		const layoutView: any = {
+			global: globalParams,
+			pageName: this.formatPageName(view.name),
 			pageTitle: view.titleOverride ? view.title : `${config().appName} - ${view.title}`,
 			contentHtml: contentHtml,
 			cssFiles: cssFiles,
 			jsFiles: jsFiles,
 			navbar: view.navbar,
+			sidebarMenu: view.sidebarMenu,
 			...view.content,
 		};
 

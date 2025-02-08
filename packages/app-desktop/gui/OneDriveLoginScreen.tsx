@@ -13,8 +13,9 @@ interface Props {
 	themeId: string;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 class OneDriveLoginScreenComponent extends React.Component<any, any> {
-	constructor(props: Props) {
+	public constructor(props: Props) {
 		super(props);
 
 		this.state = {
@@ -22,8 +23,10 @@ class OneDriveLoginScreenComponent extends React.Component<any, any> {
 		};
 	}
 
-	async componentDidMount() {
+	public async componentDidMount() {
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 		const log = (s: any) => {
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 			this.setState((state: any) => {
 				const authLog = state.authLog.slice();
 				authLog.push({ key: (Date.now() + Math.random()).toString(), text: s });
@@ -35,6 +38,7 @@ class OneDriveLoginScreenComponent extends React.Component<any, any> {
 		const syncTarget = reg.syncTarget(syncTargetId);
 		const oneDriveApiUtils = new OneDriveApiNodeUtils(syncTarget.api());
 		const auth = await oneDriveApiUtils.oauthDance({
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 			log: (s: any) => log(s),
 		});
 
@@ -48,15 +52,15 @@ class OneDriveLoginScreenComponent extends React.Component<any, any> {
 		}
 	}
 
-	startUrl() {
+	public startUrl() {
 		return reg.syncTarget().api().authCodeUrl(this.redirectUrl());
 	}
 
-	redirectUrl() {
+	public redirectUrl() {
 		return reg.syncTarget().api().nativeClientRedirectUrl();
 	}
 
-	render() {
+	public render() {
 		const theme = themeStyle(this.props.themeId);
 
 		const logComps = [];
@@ -81,6 +85,7 @@ class OneDriveLoginScreenComponent extends React.Component<any, any> {
 	}
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 const mapStateToProps = (state: any) => {
 	return {
 		themeId: state.settings.theme,

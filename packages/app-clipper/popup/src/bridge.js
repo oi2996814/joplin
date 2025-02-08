@@ -1,3 +1,7 @@
+/* eslint-disable no-console */
+
+import getActiveTabs from '../../util/getActiveTabs.mjs';
+import joplinEnv from '../../util/joplinEnv.mjs';
 const { randomClipperPort } = require('./randomClipperPort');
 
 function msleep(ms) {
@@ -15,13 +19,12 @@ class Bridge {
 		this.token_ = null;
 	}
 
-	async init(browser, browserSupportsPromises, store) {
+	async init(browser, store) {
 		console.info('Popup: Init bridge');
 
 		this.browser_ = browser;
 		this.dispatch_ = store.dispatch;
 		this.store_ = store;
-		this.browserSupportsPromises_ = browserSupportsPromises;
 		this.clipperServerPort_ = null;
 		this.clipperServerPortStatus_ = 'searching';
 
@@ -72,12 +75,7 @@ class Bridge {
 			}
 		};
 		this.browser_.runtime.onMessage.addListener(this.browser_notify);
-		const backgroundPage = await this.backgroundPage(this.browser_);
-
-		// Not sure why the getBackgroundPage() sometimes returns null, so
-		// in that case default to "prod" environment, which means the live
-		// extension won't be affected by this bug.
-		this.env_ = backgroundPage ? backgroundPage.joplinEnv() : 'prod';
+		this.env_ = joplinEnv();
 
 		console.info('Popup: Env:', this.env());
 
@@ -195,17 +193,6 @@ class Bridge {
 		}
 	}
 
-	async backgroundPage(browser) {
-		const bgp = browser.extension.getBackgroundPage();
-		if (bgp) return bgp;
-
-		return new Promise((resolve) => {
-			browser.runtime.getBackgroundPage((bgp) => {
-				resolve(bgp);
-			});
-		});
-	}
-
 	env() {
 		return this.env_;
 	}
@@ -303,50 +290,26 @@ class Bridge {
 		return `http://127.0.0.1:${port}`;
 	}
 
-	async tabsExecuteScript(options) {
-		if (this.browserSupportsPromises_) return this.browser().tabs.executeScript(options);
-
-		return new Promise((resolve, reject) => {
-			this.browser().tabs.executeScript(options, () => {
-				const e = this.browser().runtime.lastError;
-				if (e) {
-					const msg = [`tabsExecuteScript: Cannot load ${JSON.stringify(options)}`];
-					if (e.message) msg.push(e.message);
-					reject(new Error(msg.join(': ')));
-				}
-				resolve();
-			});
+	async tabsExecuteScript(files) {
+		const activeTabs = await getActiveTabs(this.browser());
+		await this.browser().scripting.executeScript({
+			target: {
+				tabId: activeTabs[0].id,
+			},
+			files,
 		});
 	}
 
 	async tabsQuery(options) {
-		if (this.browserSupportsPromises_) return this.browser().tabs.query(options);
-
-		return new Promise((resolve) => {
-			this.browser().tabs.query(options, (tabs) => {
-				resolve(tabs);
-			});
-		});
+		return this.browser().tabs.query(options);
 	}
 
 	async tabsSendMessage(tabId, command) {
-		if (this.browserSupportsPromises_) return this.browser().tabs.sendMessage(tabId, command);
-
-		return new Promise((resolve) => {
-			this.browser().tabs.sendMessage(tabId, command, (result) => {
-				resolve(result);
-			});
-		});
+		return this.browser().tabs.sendMessage(tabId, command);
 	}
 
 	async tabsCreate(options) {
-		if (this.browserSupportsPromises_) return this.browser().tabs.create(options);
-
-		return new Promise((resolve) => {
-			this.browser().tabs.create(options, () => {
-				resolve();
-			});
-		});
+		return this.browser().tabs.create(options);
 	}
 
 	async folderTree() {
@@ -354,29 +317,15 @@ class Bridge {
 	}
 
 	async storageSet(keys) {
-		if (this.browserSupportsPromises_) return this.browser().storage.local.set(keys);
-
-		return new Promise((resolve) => {
-			this.browser().storage.local.set(keys, () => {
-				resolve();
-			});
-		});
+		return this.browser().storage.local.set(keys);
 	}
 
 	async storageGet(keys, defaultValue = null) {
-		if (this.browserSupportsPromises_) {
-			try {
-				const r = await this.browser().storage.local.get(keys);
-				return r;
-			} catch (error) {
-				return defaultValue;
-			}
-		} else {
-			return new Promise((resolve) => {
-				this.browser().storage.local.get(keys, (result) => {
-					resolve(result);
-				});
-			});
+		try {
+			const r = await this.browser().storage.local.get(keys);
+			return r;
+		} catch (error) {
+			return defaultValue;
 		}
 	}
 
@@ -408,7 +357,7 @@ class Bridge {
 
 		if (body) fetchOptions.body = typeof body === 'string' ? body : JSON.stringify(body);
 
-		query = Object.assign(query || {}, { token: this.token_ });
+		query = { ...query, token: this.token_ };
 
 		let queryString = '';
 		if (query) {
@@ -463,9 +412,11 @@ class Bridge {
 			// This is the perfect Heisenbug - it happens always when opening the popup the first time EXCEPT
 			// when the debugger is open. Then everything is working fine and the bug NEVER EVER happens,
 			// so it's impossible to understand what's going on.
-			await this.clipperApiExec('POST', 'notes', { nounce: this.nounce_++ }, content);
+			const response = await this.clipperApiExec('POST', 'notes', { nounce: this.nounce_++ }, content);
 
 			this.dispatch({ type: 'CONTENT_UPLOAD', operation: { uploading: false, success: true } });
+
+			return response;
 		} catch (error) {
 			if (error.message === '{"error":"Duplicate Nounce"}') {
 				this.dispatch({ type: 'CONTENT_UPLOAD', operation: { uploading: false, success: true } });

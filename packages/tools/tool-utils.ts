@@ -1,9 +1,9 @@
-import * as fs from 'fs-extra';
-import { readCredentialFile } from '@joplin/lib/utils/credentialFiles';
+import { pathExists, readFile, writeFile, unlink, stat, createWriteStream } from 'fs-extra';
+import { hasCredentialFile, readCredentialFile } from '@joplin/lib/utils/credentialFiles';
+import { execCommand as execCommand2, commandToString } from '@joplin/utils';
 
 const fetch = require('node-fetch');
 const execa = require('execa');
-const { splitCommandString } = require('@joplin/lib/string-utils');
 const moment = require('moment');
 
 export interface GitHubReleaseAsset {
@@ -18,27 +18,13 @@ export interface GitHubRelease {
 	html_url: string;
 	prerelease: boolean;
 	draft: boolean;
+	body: string;
 }
 
-function quotePath(path: string) {
-	if (!path) return '';
-	if (path.indexOf('"') < 0 && path.indexOf(' ') < 0) return path;
-	path = path.replace(/"/, '\\"');
-	return `"${path}"`;
-}
+async function insertChangelog(tag: string, changelogPath: string, changelog: string, isPrerelease: boolean, repoTagUrl = '') {
+	repoTagUrl = repoTagUrl || 'https://github.com/laurent22/joplin/releases/tag';
 
-function commandToString(commandName: string, args: string[] = []) {
-	const output = [quotePath(commandName)];
-
-	for (const arg of args) {
-		output.push(quotePath(arg));
-	}
-
-	return output.join(' ');
-}
-
-async function insertChangelog(tag: string, changelogPath: string, changelog: string, isPrerelease: boolean) {
-	const currentText = await fs.readFile(changelogPath, 'UTF-8');
+	const currentText = await readFile(changelogPath, 'utf8');
 	const lines = currentText.split('\n');
 
 	const beforeLines = [];
@@ -60,7 +46,7 @@ async function insertChangelog(tag: string, changelogPath: string, changelog: st
 
 	const header = [
 		'##',
-		`[${tag}](https://github.com/laurent22/joplin/releases/tag/${tag})`,
+		`[${tag}](${repoTagUrl}/${tag})`,
 	];
 	if (isPrerelease) header.push('(Pre-release)');
 	header.push('-');
@@ -80,23 +66,22 @@ async function insertChangelog(tag: string, changelogPath: string, changelog: st
 
 export function releaseFinalGitCommands(appName: string, newVersion: string, newTag: string): string {
 	const finalCmds = [
-		'git pull',
 		'git add -A',
 		`git commit -m "${appName} ${newVersion}"`,
 		`git tag "${newTag}"`,
 		'git push',
-		'git push --tags',
+		`git push origin refs/tags/${newTag}`,
 	];
 
 	return finalCmds.join(' && ');
 }
 
-export async function completeReleaseWithChangelog(changelogPath: string, newVersion: string, newTag: string, appName: string, isPreRelease: boolean) {
-	const changelog = (await execCommand2(`node ${rootDir}/packages/tools/git-changelog ${newTag} --publish-format full`, { })).trim();
+export async function completeReleaseWithChangelog(changelogPath: string, newVersion: string, newTag: string, appName: string, isPreRelease: boolean, repoTagUrl = '') {
+	const changelog = (await execCommand2(`node ${rootDir}/packages/tools/git-changelog ${newTag} --publish-format full`, { showStdout: false })).trim();
 
-	const newChangelog = await insertChangelog(newTag, changelogPath, changelog, isPreRelease);
+	const newChangelog = await insertChangelog(newTag, changelogPath, changelog, isPreRelease, repoTagUrl);
 
-	await fs.writeFile(changelogPath, newChangelog);
+	await writeFile(changelogPath, newChangelog);
 
 	console.info('');
 	console.info('Verify that the changelog is correct:');
@@ -111,31 +96,34 @@ export async function completeReleaseWithChangelog(changelogPath: string, newVer
 async function loadGitHubUsernameCache() {
 	const path = `${__dirname}/github_username_cache.json`;
 
-	if (await fs.pathExists(path)) {
-		const jsonString = await fs.readFile(path, 'utf8');
+	if (await pathExists(path)) {
+		const jsonString = await readFile(path, 'utf8');
 		return JSON.parse(jsonString);
 	}
 
 	return {};
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 async function saveGitHubUsernameCache(cache: any) {
 	const path = `${__dirname}/github_username_cache.json`;
-	await fs.writeFile(path, JSON.stringify(cache));
+	await writeFile(path, JSON.stringify(cache));
 }
 
 // Returns the project root dir
-export const rootDir = require('path').dirname(require('path').dirname(__dirname));
+export const rootDir: string = require('path').dirname(require('path').dirname(__dirname));
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 export function execCommand(command: string, options: any = null): Promise<string> {
 	options = options || {};
 
 	const exec = require('child_process').exec;
 
 	return new Promise((resolve, reject) => {
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 		exec(command, options, (error: any, stdout: any, stderr: any) => {
 			if (error) {
-				if (error.signal == 'SIGTERM') {
+				if (error.signal === 'SIGTERM') {
 					resolve('Process was killed');
 				} else {
 					reject(error);
@@ -147,7 +135,7 @@ export function execCommand(command: string, options: any = null): Promise<strin
 	});
 }
 
-export function resolveRelativePathWithinDir(baseDir: string, ...relativePath: string[]) {
+export function resolveRelativePathWithinDir(baseDir: string, ...relativePath: string[]): string {
 	const path = require('path');
 	const resolvedBaseDir = path.resolve(baseDir);
 	const resolvedPath = path.resolve(baseDir, ...relativePath);
@@ -162,65 +150,21 @@ export function execCommandVerbose(commandName: string, args: string[] = []) {
 	return promise;
 }
 
-interface ExecCommandOptions {
-	showInput?: boolean;
-	showStdout?: boolean;
-	showStderr?: boolean;
-	quiet?: boolean;
-}
-
-// There's lot of execCommandXXX functions, but eventually all scripts should
-// use the one below, which supports:
-//
-// - Printing the command being executed
-// - Printing the output in real time (piping to stdout)
-// - Returning the command result as string
-export async function execCommand2(command: string | string[], options: ExecCommandOptions = null): Promise<string> {
-	options = {
-		showInput: true,
-		showStdout: true,
-		showStderr: true,
-		quiet: false,
-		...options,
-	};
-
-	if (options.quiet) {
-		options.showInput = false;
-		options.showStdout = false;
-		options.showStderr = false;
-	}
-
-	if (options.showInput) {
-		if (typeof command === 'string') {
-			console.info(`> ${command}`);
-		} else {
-			console.info(`> ${commandToString(command[0], command.slice(1))}`);
-		}
-	}
-
-	const args: string[] = typeof command === 'string' ? splitCommandString(command) : command as string[];
-	const executableName = args[0];
-	args.splice(0, 1);
-	const promise = execa(executableName, args);
-	if (options.showStdout) promise.stdout.pipe(process.stdout);
-	if (options.showStderr) promise.stdout.pipe(process.stderr);
-	const result = await promise;
-	return result.stdout.trim();
-}
-
 export function execCommandWithPipes(executable: string, args: string[]) {
 	const spawn = require('child_process').spawn;
 
 	return new Promise((resolve, reject) => {
 		const child = spawn(executable, args, { stdio: 'inherit' });
 
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 		child.on('error', (error: any) => {
 			reject(error);
 		});
 
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 		child.on('close', (code: any) => {
 			if (code !== 0) {
-				reject(`Ended with code ${code}`);
+				reject(new Error(`Ended with code ${code}`));
 			} else {
 				resolve(null);
 			}
@@ -234,33 +178,61 @@ export function toSystemSlashes(path: string) {
 	return path.replace(/\\/g, '/');
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 export async function setPackagePrivateField(filePath: string, value: any) {
-	const text = await fs.readFile(filePath, 'utf8');
+	const text = await readFile(filePath, 'utf8');
 	const obj = JSON.parse(text);
 	if (!value) {
 		delete obj.private;
 	} else {
 		obj.private = true;
 	}
-	await fs.writeFile(filePath, JSON.stringify(obj, null, 2), 'utf8');
+	await writeFile(filePath, JSON.stringify(obj, null, 2), 'utf8');
 }
 
-export async function downloadFile(url: string, targetPath: string) {
+export async function downloadFile(url: string, targetPath: string, headers: { [key: string]: string }) {
 	const https = require('https');
-	const fs = require('fs');
 
 	return new Promise((resolve, reject) => {
-		const file = fs.createWriteStream(targetPath);
-		https.get(url, function(response: any) {
-			if (response.statusCode !== 200) reject(new Error(`HTTP error ${response.statusCode}`));
-			response.pipe(file);
-			file.on('finish', function() {
-				// file.close();
-				resolve(null);
+		const makeDownloadRequest = (url: string) => {
+			const file = createWriteStream(targetPath);
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+			https.get(url, headers, (response: any) => {
+				if (response.statusCode === 403) {
+					let data = '';
+					response.on('data', (chunk: string) => {
+						data += chunk;
+					});
+					response.on('end', () => {
+						console.log(`Body: ${data}`);
+						reject(new Error('Access forbidden. Possibly due to rate limiting or lack of permission.'));
+					});
+				} else if (response.statusCode === 302 || response.statusCode === 301) {
+					const newUrl = response.headers.location;
+					if (newUrl) {
+						console.log(`Redirecting download request to ${newUrl}`);
+						file.close();
+						makeDownloadRequest(url);
+					} else {
+						reject(new Error('Redirection failed, url undefined'));
+					}
+				} else if (response.statusCode !== 200) {
+					reject(new Error(`HTTP error ${response.statusCode}`));
+				} else {
+					response.pipe(file);
+					file.on('finish', () => {
+						file.close();
+						resolve(null);
+					});
+				}
+
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+			}).on('error', (error: any) => {
+				reject(error);
 			});
-		}).on('error', (error: any) => {
-			reject(error);
-		});
+		};
+
+		makeDownloadRequest(url);
 	});
 }
 
@@ -272,22 +244,22 @@ export function fileSha256(filePath: string) {
 		const shasum = crypto.createHash(algo);
 
 		const s = fs.ReadStream(filePath);
-		s.on('data', function(d: any) { shasum.update(d); });
-		s.on('end', function() {
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+		s.on('data', (d: any) => { shasum.update(d); });
+		s.on('end', () => {
 			const d = shasum.digest('hex');
 			resolve(d);
 		});
-		s.on('error', function(error: any) {
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+		s.on('error', (error: any) => {
 			reject(error);
 		});
 	});
 }
 
 export async function unlinkForce(filePath: string) {
-	const fs = require('fs-extra');
-
 	try {
-		await fs.unlink(filePath);
+		await unlink(filePath);
 	} catch (error) {
 		if (error.code === 'ENOENT') return;
 		throw error;
@@ -295,16 +267,15 @@ export async function unlinkForce(filePath: string) {
 }
 
 export function fileExists(filePath: string) {
-	const fs = require('fs-extra');
-
 	return new Promise((resolve, reject) => {
-		fs.stat(filePath, function(err: any) {
-			if (err == null) {
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+		stat(filePath, (error: any) => {
+			if (!error) {
 				resolve(true);
-			} else if (err.code == 'ENOENT') {
+			} else if (error.code === 'ENOENT') {
 				resolve(false);
 			} else {
-				reject(err);
+				reject(error);
 			}
 		});
 	});
@@ -333,7 +304,17 @@ export async function gitPullTry(ignoreIfNotBranch = true) {
 	}
 }
 
+export const gitCurrentBranch = async (): Promise<string> => {
+	const output = await execCommand2('git rev-parse --abbrev-ref HEAD', { quiet: true });
+	return output.trim();
+};
+
 export async function githubUsername(email: string, name: string) {
+	if (email.endsWith('@users.noreply.github.com')) {
+		const splitted = email.split('@')[0].split('+');
+		return splitted.length === 1 ? splitted[0] : splitted[1];
+	}
+
 	const cache = await loadGitHubUsernameCache();
 	const cacheKey = `${email}:${name}`;
 	if (cacheKey in cache) return cache[cacheKey];
@@ -383,20 +364,41 @@ export function patreonOauthToken() {
 }
 
 export function githubOauthToken() {
-	return readCredentialFile('github_oauth_token.txt');
+	const filename = 'github_oauth_token.txt';
+	if (hasCredentialFile(filename)) return readCredentialFile(filename);
+	if (process.env.JOPLIN_GITHUB_OAUTH_TOKEN) return process.env.JOPLIN_GITHUB_OAUTH_TOKEN;
+	throw new Error(`Cannot get Oauth token. Neither ${filename} nor the env variable JOPLIN_GITHUB_OAUTH_TOKEN are present`);
 }
 
 // Note that the GitHub API releases/latest is broken on the joplin-android repo
 // as of Nov 2021 (last working on 3 November 2021, first broken on 19
 // November). It used to return the latest **published** release but now it
-// retuns... some release, always the same one, but not the latest one. GitHub
+// returns... some release, always the same one, but not the latest one. GitHub
 // says that nothing has changed on the API, although it used to work. So since
 // we can't use /latest anymore, we need to fetch all the releases to find the
 // latest published one.
+//
+// As of July 2023 /latest seems to be working again, so switching back to this
+// method, but let's keep the old method just in case they break the API again.
 export async function gitHubLatestRelease(repoName: string): Promise<GitHubRelease> {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+	const response: any = await fetch(`https://api.github.com/repos/laurent22/${repoName}/releases/latest`, {
+		headers: {
+			'Content-Type': 'application/json',
+			'User-Agent': 'Joplin Readme Updater',
+		},
+	});
+
+	if (!response.ok) throw new Error(`Cannot fetch releases: ${response.statusText}`);
+
+	return response.json();
+}
+
+export async function gitHubLatestRelease_KeepInCaseMicrosoftBreaksTheApiAgain(repoName: string): Promise<GitHubRelease> {
 	let pageNum = 1;
 
 	while (true) {
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 		const response: any = await fetch(`https://api.github.com/repos/laurent22/${repoName}/releases?page=${pageNum}`, {
 			headers: {
 				'Content-Type': 'application/json',
@@ -418,11 +420,26 @@ export async function gitHubLatestRelease(repoName: string): Promise<GitHubRelea
 	}
 }
 
+export const gitHubLatestReleases = async (page: number, perPage: number) => {
+	const response = await fetch(`https://api.github.com/repos/laurent22/joplin/releases?page=${page}&per_page=${perPage}`, {
+		headers: {
+			'Content-Type': 'application/json',
+			'User-Agent': 'Joplin Forum Updater',
+		},
+	});
+
+	if (!response.ok) throw new Error(`Cannot fetch releases: ${response.statusText}`);
+
+	const releases: GitHubRelease[] = await response.json();
+	if (!releases.length) throw new Error('Cannot find latest release');
+
+	return releases;
+};
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 export async function githubRelease(project: string, tagName: string, options: any = null): Promise<GitHubRelease> {
-	options = Object.assign({}, {
-		isDraft: false,
-		isPreRelease: false,
-	}, options);
+	options = { isDraft: false,
+		isPreRelease: false, ...options };
 
 	const oauthToken = await githubOauthToken();
 
@@ -449,6 +466,12 @@ export async function githubRelease(project: string, tagName: string, options: a
 
 	return responseJson;
 }
+
+export const gitHubLinkify = (markdown: string) => {
+	markdown = markdown.replace(/#(\d+)/g, '[#$1](https://github.com/laurent22/joplin/issues/$1)');
+	markdown = markdown.replace(/\(([a-f0-9]+)\)/g, '([$1](https://github.com/laurent22/joplin/commit/$1))');
+	return markdown;
+};
 
 export function readline(question: string) {
 	return new Promise((resolve) => {
@@ -479,12 +502,11 @@ export function isMac() {
 }
 
 export async function insertContentIntoFile(filePath: string, markerOpen: string, markerClose: string, contentToInsert: string) {
-	const fs = require('fs-extra');
-	let content = await fs.readFile(filePath, 'utf-8');
+	let content = await readFile(filePath, 'utf-8');
 	// [^]* matches any character including new lines
 	const regex = new RegExp(`${markerOpen}[^]*?${markerClose}`);
 	content = content.replace(regex, markerOpen + contentToInsert + markerClose);
-	await fs.writeFile(filePath, content);
+	await writeFile(filePath, content);
 }
 
 export function dirname(path: string) {

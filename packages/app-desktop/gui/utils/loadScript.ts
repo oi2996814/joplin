@@ -1,17 +1,20 @@
-import Logger from '@joplin/lib/Logger';
+import Logger from '@joplin/utils/Logger';
 
 const logger = Logger.create('loadScript');
 
 export interface Script {
 	id: string;
 	src: string;
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	attrs?: Record<string, any>;
 }
 
-export const loadScript = async (script: Script) => {
+export const loadScript = async (script: Script, document: Document) => {
 	return new Promise((resolve) => {
+		// eslint-disable-next-line no-console
 		console.info('Loading script:', script);
 
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 		let element: any = document.getElementById(script.id);
 
 		if (element) {

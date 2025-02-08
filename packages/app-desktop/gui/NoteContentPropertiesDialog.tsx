@@ -3,14 +3,15 @@ import { useState, useEffect } from 'react';
 import { _ } from '@joplin/lib/locale';
 import DialogButtonRow from './DialogButtonRow';
 const { themeStyle } = require('@joplin/lib/theme');
-const Countable = require('countable');
-import markupLanguageUtils from '../utils/markupLanguageUtils';
+const Countable = require('@joplin/lib/countable/Countable');
+import markupLanguageUtils from '@joplin/lib/utils/markupLanguageUtils';
+import Dialog from './Dialog';
 
 interface NoteContentPropertiesDialogProps {
 	themeId: number;
 	text: string;
 	markupLanguage: number;
-	onClose: Function;
+	onClose: ()=> void;
 }
 
 interface TextPropertiesMap {
@@ -21,6 +22,7 @@ interface KeyToLabelMap {
 	[key: string]: string;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 let markupToHtml_: any = null;
 function markupToHtml() {
 	if (markupToHtml_) return markupToHtml_;
@@ -28,13 +30,15 @@ function markupToHtml() {
 	return markupToHtml_;
 }
 
+// eslint-disable-next-line @typescript-eslint/ban-types -- Old code before rule was applied
 function countElements(text: string, wordSetter: Function, characterSetter: Function, characterNoSpaceSetter: Function, lineSetter: Function) {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	Countable.count(text, (counter: any) => {
 		wordSetter(counter.words);
 		characterSetter(counter.all);
 		characterNoSpaceSetter(counter.characters);
 	});
-	text === '' ? lineSetter(0) : lineSetter(text.split('\n').length);
+	lineSetter(text === '' ? 0 : text.split('\n').length);
 }
 
 function formatReadTime(readTimeMinutes: number) {
@@ -47,6 +51,7 @@ function formatReadTime(readTimeMinutes: number) {
 
 export default function NoteContentPropertiesDialog(props: NoteContentPropertiesDialogProps) {
 	const theme = themeStyle(props.themeId);
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	const tableBodyComps: any[] = [];
 	// For the source Markdown
 	const [lines, setLines] = useState<number>(0);
@@ -70,6 +75,7 @@ export default function NoteContentPropertiesDialog(props: NoteContentProperties
 	useEffect(() => {
 		const strippedText: string = markupToHtml().stripMarkup(props.markupLanguage, props.text);
 		countElements(strippedText, setStrippedWords, setStrippedCharacters, setStrippedCharactersNoSpace, setStrippedLines);
+		// eslint-disable-next-line @seiyab/react-hooks/exhaustive-deps -- Old code before rule was applied
 	}, [props.text]);
 
 	useEffect(() => {
@@ -153,22 +159,20 @@ export default function NoteContentPropertiesDialog(props: NoteContentProperties
 	const readTimeLabel = _('Read time: %s min', formatReadTime(strippedReadTime));
 
 	return (
-		<div style={theme.dialogModalLayer}>
-			<div style={theme.dialogBox}>
-				<div style={dialogBoxHeadingStyle}>{_('Statistics')}</div>
-				<table>
-					<thead>
-						{tableHeader}
-					</thead>
-					<tbody>
-						{tableBodyComps}
-					</tbody>
-				</table>
-				<div style={{ ...labelCompStyle, marginTop: 10 }}>
-					{readTimeLabel}
-				</div>
-				<DialogButtonRow themeId={props.themeId} onClick={buttonRow_click} okButtonShow={false} cancelButtonLabel={_('Close')}/>
+		<Dialog onCancel={props.onClose}>
+			<div style={dialogBoxHeadingStyle}>{_('Statistics')}</div>
+			<table>
+				<thead>
+					{tableHeader}
+				</thead>
+				<tbody>
+					{tableBodyComps}
+				</tbody>
+			</table>
+			<div style={{ ...labelCompStyle, marginTop: 10 }}>
+				{readTimeLabel}
 			</div>
-		</div>
+			<DialogButtonRow themeId={props.themeId} onClick={buttonRow_click} okButtonShow={false} cancelButtonLabel={_('Close')}/>
+		</Dialog>
 	);
 }

@@ -1,10 +1,10 @@
 import { Knex } from 'knex';
 import { DbConnection, defaultAdminEmail, defaultAdminPassword } from '../db';
 import { hashPassword } from '../utils/auth';
-import uuidgen from '../utils/uuidgen';
+import { uuidgen } from '@joplin/lib/uuid';
 
-export async function up(db: DbConnection): Promise<any> {
-	await db.schema.createTable('users', function(table: Knex.CreateTableBuilder) {
+export const up = async (db: DbConnection) => {
+	await db.schema.createTable('users', (table: Knex.CreateTableBuilder) => {
 		table.string('id', 32).unique().primary().notNullable();
 		table.text('email', 'mediumtext').unique().notNullable();
 		table.text('password', 'mediumtext').notNullable();
@@ -14,11 +14,11 @@ export async function up(db: DbConnection): Promise<any> {
 		table.bigInteger('created_time').notNullable();
 	});
 
-	await db.schema.alterTable('users', function(table: Knex.CreateTableBuilder) {
+	await db.schema.alterTable('users', (table: Knex.CreateTableBuilder) => {
 		table.index(['email']);
 	});
 
-	await db.schema.createTable('sessions', function(table: Knex.CreateTableBuilder) {
+	await db.schema.createTable('sessions', (table: Knex.CreateTableBuilder) => {
 		table.string('id', 32).unique().primary().notNullable();
 		table.string('user_id', 32).notNullable();
 		table.string('auth_code', 32).defaultTo('').notNullable();
@@ -26,7 +26,7 @@ export async function up(db: DbConnection): Promise<any> {
 		table.bigInteger('created_time').notNullable();
 	});
 
-	await db.schema.createTable('permissions', function(table: Knex.CreateTableBuilder) {
+	await db.schema.createTable('permissions', (table: Knex.CreateTableBuilder) => {
 		table.string('id', 32).unique().primary().notNullable();
 		table.string('user_id', 32).notNullable();
 		table.integer('item_type').notNullable();
@@ -37,13 +37,13 @@ export async function up(db: DbConnection): Promise<any> {
 		table.bigInteger('created_time').notNullable();
 	});
 
-	await db.schema.alterTable('permissions', function(table: Knex.CreateTableBuilder) {
+	await db.schema.alterTable('permissions', (table: Knex.CreateTableBuilder) => {
 		table.unique(['user_id', 'item_type', 'item_id']);
 		table.index(['item_id']);
 		table.index(['item_type', 'item_id']);
 	});
 
-	await db.schema.createTable('files', function(table: Knex.CreateTableBuilder) {
+	await db.schema.createTable('files', (table: Knex.CreateTableBuilder) => {
 		table.string('id', 32).unique().primary().notNullable();
 		table.string('owner_id', 32).notNullable();
 		table.text('name').notNullable();
@@ -57,12 +57,12 @@ export async function up(db: DbConnection): Promise<any> {
 		table.bigInteger('created_time').notNullable();
 	});
 
-	await db.schema.alterTable('files', function(table: Knex.CreateTableBuilder) {
+	await db.schema.alterTable('files', (table: Knex.CreateTableBuilder) => {
 		table.unique(['parent_id', 'name']);
 		table.index(['parent_id']);
 	});
 
-	await db.schema.createTable('changes', function(table: Knex.CreateTableBuilder) {
+	await db.schema.createTable('changes', (table: Knex.CreateTableBuilder) => {
 		// Note that in this table, the counter is the primary key, since
 		// we want it to be automatically incremented. There's also a
 		// column ID to publicly identify a change.
@@ -78,12 +78,12 @@ export async function up(db: DbConnection): Promise<any> {
 		table.bigInteger('created_time').notNullable();
 	});
 
-	await db.schema.alterTable('changes', function(table: Knex.CreateTableBuilder) {
+	await db.schema.alterTable('changes', (table: Knex.CreateTableBuilder) => {
 		table.index(['id']);
 		table.index(['parent_id']);
 	});
 
-	await db.schema.createTable('api_clients', function(table: Knex.CreateTableBuilder) {
+	await db.schema.createTable('api_clients', (table: Knex.CreateTableBuilder) => {
 		table.string('id', 32).unique().primary().notNullable();
 		table.string('name', 32).notNullable();
 		table.string('secret', 32).notNullable();
@@ -98,7 +98,7 @@ export async function up(db: DbConnection): Promise<any> {
 	await db('users').insert({
 		id: adminId,
 		email: defaultAdminEmail,
-		password: hashPassword(defaultAdminPassword),
+		password: await hashPassword(defaultAdminPassword),
 		full_name: 'Admin',
 		is_admin: 1,
 		updated_time: now,
@@ -123,13 +123,13 @@ export async function up(db: DbConnection): Promise<any> {
 		updated_time: now,
 		created_time: now,
 	});
-}
+};
 
-export async function down(db: DbConnection): Promise<any> {
+export const down = async (db: DbConnection) => {
 	await db.schema.dropTable('users');
 	await db.schema.dropTable('sessions');
 	await db.schema.dropTable('permissions');
 	await db.schema.dropTable('files');
 	await db.schema.dropTable('api_clients');
 	await db.schema.dropTable('changes');
-}
+};

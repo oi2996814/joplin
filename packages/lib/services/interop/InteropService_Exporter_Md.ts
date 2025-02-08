@@ -5,7 +5,7 @@ import markdownUtils from '../../markdownUtils';
 import Folder from '../../models/Folder';
 import Note from '../../models/Note';
 import { NoteEntity, ResourceEntity } from '../database/types';
-import { basename, dirname, friendlySafeFilename } from '../../path-utils';
+import { basename, dirname, friendlySafeFilename, safeFilename } from '../../path-utils';
 import { MarkupToHtml } from '@joplin/renderer';
 
 export default class InteropService_Exporter_Md extends InteropService_Exporter_Base {
@@ -14,7 +14,7 @@ export default class InteropService_Exporter_Md extends InteropService_Exporter_
 	private resourceDir_: string;
 	private createdDirs_: string[];
 
-	async init(destDir: string) {
+	public async init(destDir: string) {
 		this.destDir_ = destDir;
 		this.resourceDir_ = destDir ? `${destDir}/_resources` : null;
 		this.createdDirs_ = [];
@@ -23,7 +23,8 @@ export default class InteropService_Exporter_Md extends InteropService_Exporter_
 		await shim.fsDriver().mkdir(this.resourceDir_);
 	}
 
-	async makeDirPath_(item: any, pathPart: string = null, findUniqueFilename: boolean = true) {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+	private async makeDirPath_(item: any, pathPart: string = null, findUniqueFilename = true) {
 		let output = '';
 		while (true) {
 			if (item.type_ === BaseModel.TYPE_FOLDER) {
@@ -39,14 +40,15 @@ export default class InteropService_Exporter_Md extends InteropService_Exporter_
 		}
 	}
 
-	async relaceLinkedItemIdsByRelativePaths_(item: any) {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+	private async replaceLinkedItemIdsByRelativePaths_(item: any) {
 		const relativePathToRoot = await this.makeDirPath_(item, '..');
 
 		const newBody = await this.replaceResourceIdsByRelativePaths_(item.body, relativePathToRoot);
 		return await this.replaceNoteIdsByRelativePaths_(newBody, relativePathToRoot);
 	}
 
-	async replaceResourceIdsByRelativePaths_(noteBody: string, relativePathToRoot: string) {
+	private async replaceResourceIdsByRelativePaths_(noteBody: string, relativePathToRoot: string) {
 		const linkedResourceIds = await Note.linkedResourceIds(noteBody);
 		const resourcePaths = this.context() && this.context().destResourcePaths ? this.context().destResourcePaths : {};
 
@@ -56,7 +58,7 @@ export default class InteropService_Exporter_Md extends InteropService_Exporter_
 		return await this.replaceItemIdsByRelativePaths_(noteBody, linkedResourceIds, resourcePaths, createRelativePath);
 	}
 
-	async replaceNoteIdsByRelativePaths_(noteBody: string, relativePathToRoot: string) {
+	private async replaceNoteIdsByRelativePaths_(noteBody: string, relativePathToRoot: string) {
 		const linkedNoteIds = await Note.linkedNoteIds(noteBody);
 		const notePaths = this.context() && this.context().notePaths ? this.context().notePaths : {};
 
@@ -66,21 +68,24 @@ export default class InteropService_Exporter_Md extends InteropService_Exporter_
 		return await this.replaceItemIdsByRelativePaths_(noteBody, linkedNoteIds, notePaths, createRelativePath);
 	}
 
-	async replaceItemIdsByRelativePaths_(noteBody: string, linkedItemIds: string[], paths: any, fn_createRelativePath: Function) {
+	// eslint-disable-next-line @typescript-eslint/ban-types, @typescript-eslint/no-explicit-any -- Old code before rule was applied, Old code before rule was applied
+	private async replaceItemIdsByRelativePaths_(noteBody: string, linkedItemIds: string[], paths: any, fn_createRelativePath: Function) {
 		let newBody = noteBody;
 
 		for (let i = 0; i < linkedItemIds.length; i++) {
 			const id = linkedItemIds[i];
 			const itemPath = fn_createRelativePath(paths[id]);
-			newBody = newBody.replace(new RegExp(`:/${id}`, 'g'), itemPath);
+			newBody = newBody.replace(new RegExp(`:/${id}`, 'g'), markdownUtils.escapeLinkUrl(itemPath));
 		}
 
 		return newBody;
 	}
 
-	async prepareForProcessingItemType(itemType: number, itemsToExport: any[]) {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+	public async prepareForProcessingItemType(itemType: number, itemsToExport: any[]) {
 		if (itemType === BaseModel.TYPE_NOTE) {
 			// Create unique file path for the note
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 			const context: any = {
 				notePaths: {},
 			};
@@ -102,7 +107,7 @@ export default class InteropService_Exporter_Md extends InteropService_Exporter_
 
 			// Strip the absolute path to export dir and keep only the relative paths
 			const destDir = this.destDir_;
-			Object.keys(context.notePaths).map(function(id) {
+			Object.keys(context.notePaths).map((id) => {
 				context.notePaths[id] = context.notePaths[id].substr(destDir.length + 1);
 			});
 
@@ -114,7 +119,8 @@ export default class InteropService_Exporter_Md extends InteropService_Exporter_
 		return await Note.replaceResourceInternalToExternalLinks(await Note.serialize(modNote, ['body']));
 	}
 
-	async processItem(_itemType: number, item: any) {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+	public async processItem(_itemType: number, item: any) {
 		if ([BaseModel.TYPE_NOTE, BaseModel.TYPE_FOLDER].indexOf(item.type_) < 0) return;
 
 		if (item.type_ === BaseModel.TYPE_FOLDER) {
@@ -129,8 +135,8 @@ export default class InteropService_Exporter_Md extends InteropService_Exporter_
 			const notePaths = this.context() && this.context().notePaths ? this.context().notePaths : {};
 			const noteFilePath = `${this.destDir_}/${notePaths[item.id]}`;
 
-			const noteBody = await this.relaceLinkedItemIdsByRelativePaths_(item);
-			const modNote = Object.assign({}, item, { body: noteBody });
+			const noteBody = await this.replaceLinkedItemIdsByRelativePaths_(item);
+			const modNote = { ...item, body: noteBody };
 			const noteContent = await this.getNoteExportContent_(modNote);
 			await shim.fsDriver().mkdir(dirname(noteFilePath));
 			await shim.fsDriver().writeFile(noteFilePath, noteContent, 'utf-8');
@@ -141,7 +147,7 @@ export default class InteropService_Exporter_Md extends InteropService_Exporter_
 		let fileName = basename(filePath);
 
 		if (resource.filename) {
-			fileName = resource.filename;
+			fileName = safeFilename(resource.filename);
 		} else if (resource.title) {
 			fileName = friendlySafeFilename(resource.title, null, true);
 		}
@@ -150,7 +156,7 @@ export default class InteropService_Exporter_Md extends InteropService_Exporter_
 		return fileName;
 	}
 
-	async processResource(resource: ResourceEntity, filePath: string) {
+	public async processResource(resource: ResourceEntity, filePath: string) {
 		const context = this.context();
 		if (!context.destResourcePaths) context.destResourcePaths = {};
 
@@ -163,5 +169,5 @@ export default class InteropService_Exporter_Md extends InteropService_Exporter_
 		this.updateContext(context);
 	}
 
-	async close() {}
+	public async close() {}
 }

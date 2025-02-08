@@ -3,7 +3,8 @@ import ViewController from './ViewController';
 
 export default class ToolbarButtonController extends ViewController {
 
-	constructor(id: string, pluginId: string, store: any, commandName: string, location: ToolbarButtonLocation) {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+	public constructor(id: string, pluginId: string, store: any, commandName: string, location: ToolbarButtonLocation) {
 		super(id, pluginId, store);
 
 		this.store.dispatch({

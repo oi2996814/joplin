@@ -1,4 +1,4 @@
-import Logger from '@joplin/lib/Logger';
+import Logger from '@joplin/utils/Logger';
 import { Models } from '../models/factory';
 import { msleep } from '../utils/time';
 import { Config, Env } from '../utils/types';
@@ -10,11 +10,12 @@ export default class BaseService {
 	private env_: Env;
 	private models_: Models;
 	private config_: Config;
-	protected enabled_: boolean = true;
-	private destroyed_: boolean = false;
-	protected maintenanceInterval_: number = 10000;
+	protected name_ = 'Untitled';
+	protected enabled_ = true;
+	private destroyed_ = false;
+	protected maintenanceInterval_ = 10000;
 	private scheduledMaintenances_: boolean[] = [];
-	private maintenanceInProgress_: boolean = false;
+	private maintenanceInProgress_ = false;
 
 	public constructor(env: Env, models: Models, config: Config) {
 		this.env_ = env;
@@ -23,8 +24,12 @@ export default class BaseService {
 		this.scheduleMaintenance = this.scheduleMaintenance.bind(this);
 	}
 
+	protected get name(): string {
+		return this.name_;
+	}
+
 	public async destroy() {
-		if (this.destroyed_) throw new Error('Already destroyed');
+		if (this.destroyed_) throw new Error(`${this.name}: Already destroyed`);
 		this.destroyed_ = true;
 		this.scheduledMaintenances_ = [];
 
@@ -59,7 +64,7 @@ export default class BaseService {
 		// Every time a maintenance is scheduled we push a task to this array.
 		// Whenever the maintenance actually runs, that array is cleared. So it
 		// means, that if new tasks are pushed to the array while the
-		// maintenance is runing, it will run again once it's finished, so as to
+		// maintenance is running, it will run again once it's finished, so as to
 		// process any item that might have been added.
 
 		this.scheduledMaintenances_.push(true);
@@ -75,12 +80,17 @@ export default class BaseService {
 		}
 	}
 
-	private async runMaintenance() {
+	public async runMaintenance() {
+		if (this.maintenanceInProgress_) {
+			logger.warn(`${this.name}: Skipping maintenance because it is already in progress`);
+			return;
+		}
+
 		this.maintenanceInProgress_ = true;
 		try {
 			await this.maintenance();
 		} catch (error) {
-			logger.error('Could not run maintenance', error);
+			logger.error(`${this.name}: Could not run maintenance`, error);
 		}
 		this.maintenanceInProgress_ = false;
 	}

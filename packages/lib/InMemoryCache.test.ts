@@ -1,7 +1,7 @@
 import InMemoryCache from './InMemoryCache';
 import time from './time';
 
-describe('InMemoryCache', function() {
+describe('InMemoryCache', () => {
 
 	it('should get and set values', () => {
 		const cache = new InMemoryCache();
@@ -21,7 +21,7 @@ describe('InMemoryCache', function() {
 	it('should expire values', async () => {
 		const cache = new InMemoryCache();
 
-		// Check that the value is udefined once the cache has expired
+		// Check that the value is undefined once the cache has expired
 		cache.setValue('test', 'something', 500);
 		expect(cache.value('test')).toBe('something');
 		await time.msleep(510);

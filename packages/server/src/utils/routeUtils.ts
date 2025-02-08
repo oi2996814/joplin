@@ -1,11 +1,12 @@
 import config, { baseUrl } from '../config';
 import { Item, ItemAddressingType, User, Uuid } from '../services/database/types';
-import { ErrorBadRequest, ErrorForbidden, ErrorNotFound } from './errors';
+import { ErrorBadRequest, ErrorCode, ErrorForbidden, ErrorNotFound } from './errors';
 import Router from './Router';
 import { AppContext, HttpMethod, RouteType } from './types';
 import { URL } from 'url';
 import { csrfCheck } from './csrf';
 import { contextSessionId } from './requestUtils';
+import { stripOffQueryParameters } from './urlUtils';
 
 const { ltrimSlashes, rtrimSlashes } = require('@joplin/lib/path-utils');
 
@@ -27,6 +28,7 @@ export enum RouteResponseFormat {
 	Json = 'json',
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 export type RouteHandler = (path: SubPath, ctx: AppContext, ...args: any[])=> Promise<any>;
 
 export interface Routers {
@@ -54,8 +56,10 @@ export enum ResponseType {
 
 export class Response {
 	public type: ResponseType;
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	public response: any;
 
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	public constructor(type: ResponseType, response: any) {
 		this.type = type;
 		this.response = response;
@@ -111,6 +115,12 @@ export function isPathBasedAddressing(fileId: string): boolean {
 	if (!fileId) return false;
 	return fileId.indexOf(':') >= 0;
 }
+
+export const urlMatchesSchema = (url: string, schema: string): boolean => {
+	url = stripOffQueryParameters(url);
+	const regex = new RegExp(`${schema.replace(/:id/, '[a-zA-Z0-9_]+')}$`);
+	return !!url.match(regex);
+};
 
 // Allows parsing the two types of paths supported by the API:
 //
@@ -189,12 +199,18 @@ function disabledAccountCheck(route: MatchedRoute, user: User) {
 	if (route.subPath.schema.startsWith('api/')) throw new ErrorForbidden(`This account is disabled. Please login to ${config().baseUrl} for more information.`);
 }
 
-export async function execRequest(routes: Routers, ctx: AppContext) {
+interface ExecRequestResult {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+	response: any;
+	path: SubPath;
+}
+
+export async function execRequest(routes: Routers, ctx: AppContext): Promise<ExecRequestResult> {
 	const match = findMatchingRoute(ctx.path, routes);
 	if (!match) throw new ErrorNotFound();
 
 	const endPoint = match.route.findEndPoint(ctx.request.method as HttpMethod, match.subPath.schema);
-	if (ctx.URL && !isValidOrigin(ctx.URL.origin, baseUrl(endPoint.type), endPoint.type)) throw new ErrorNotFound(`Invalid origin: ${ctx.URL.origin}`, 'invalidOrigin');
+	if (ctx.URL && !isValidOrigin(ctx.URL.origin, baseUrl(endPoint.type), endPoint.type)) throw new ErrorNotFound(`Invalid origin: ${ctx.URL.origin}`, ErrorCode.InvalidOrigin);
 
 	const isPublicRoute = match.route.isPublic(match.subPath.schema);
 
@@ -215,7 +231,10 @@ export async function execRequest(routes: Routers, ctx: AppContext) {
 	await csrfCheck(ctx, isPublicRoute);
 	disabledAccountCheck(match, ctx.joplin.owner);
 
-	return endPoint.handler(match.subPath, ctx);
+	return {
+		response: await endPoint.handler(match.subPath, ctx),
+		path: match.subPath,
+	};
 }
 
 // In a path such as "/api/files/SOME_ID/content" we want to find:
@@ -223,6 +242,10 @@ export async function execRequest(routes: Routers, ctx: AppContext) {
 // - The ID: "SOME_ID"
 // - The link: "content"
 export function findMatchingRoute(path: string, routes: Routers): MatchedRoute {
+	// Enforce that path starts with "/" because if it doesn't, the function
+	// will return strange but valid results.
+	if (path.length && path[0] !== '/') throw new Error(`Expected path to start with "/": ${path}`);
+
 	const splittedPath = path.split('/');
 
 	// Because the path starts with "/", we remove the first element, which is
@@ -276,6 +299,7 @@ export function findMatchingRoute(path: string, routes: Routers): MatchedRoute {
 	throw new Error('Unreachable');
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 export function respondWithItemContent(koaResponse: any, item: Item, content: Buffer): Response {
 	koaResponse.body = item.jop_type > 0 ? content.toString() : content;
 	koaResponse.set('Content-Type', item.mime_type);
@@ -288,7 +312,9 @@ export enum UrlType {
 	Login = 'login',
 	Terms = 'terms',
 	Privacy = 'privacy',
-	Tasks = 'tasks',
+	Tasks = 'admin/tasks',
+	UserDeletions = 'admin/user_deletions',
+	Reports = 'admin/reports',
 }
 
 export function makeUrl(urlType: UrlType): string {

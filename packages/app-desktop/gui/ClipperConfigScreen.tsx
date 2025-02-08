@@ -1,66 +1,59 @@
 const React = require('react');
+import { CSSProperties } from 'react';
 const { connect } = require('react-redux');
 const { clipboard } = require('electron');
-const ExtensionBadge = require('./ExtensionBadge.min');
-import bridge from '../services/bridge';
+import ExtensionBadge from './ExtensionBadge';
 import { themeStyle } from '@joplin/lib/theme';
 import { _ } from '@joplin/lib/locale';
 import ClipperServer from '@joplin/lib/ClipperServer';
 import Setting from '@joplin/lib/models/Setting';
 import EncryptionService from '@joplin/lib/services/e2ee/EncryptionService';
 import { AppState } from '../app.reducer';
+import shim, { MessageBoxType } from '@joplin/lib/shim';
 
 class ClipperConfigScreenComponent extends React.Component {
-	constructor() {
+	public constructor() {
 		super();
 
 		this.copyToken_click = this.copyToken_click.bind(this);
 	}
 
-	disableClipperServer_click() {
+	private disableClipperServer_click() {
 		Setting.setValue('clipperServer.autoStart', false);
 		void ClipperServer.instance().stop();
 	}
 
-	enableClipperServer_click() {
+	private enableClipperServer_click() {
 		Setting.setValue('clipperServer.autoStart', true);
 		void ClipperServer.instance().start();
 	}
 
-	chromeButton_click() {
-		bridge().openExternal('https://chrome.google.com/webstore/detail/joplin-web-clipper/alofnhikmmkdbbbgpnglcpdollgjjfek');
-	}
-
-	firefoxButton_click() {
-		bridge().openExternal('https://addons.mozilla.org/en-US/firefox/addon/joplin-web-clipper/');
-	}
-
-	copyToken_click() {
+	private copyToken_click() {
 		clipboard.writeText(this.props.apiToken);
 
-		alert(_('Token has been copied to the clipboard!'));
+		void shim.showMessageBox(_('Token has been copied to the clipboard!'), { type: MessageBoxType.Info });
 	}
 
-	renewToken_click() {
+	private renewToken_click() {
 		if (confirm(_('Are you sure you want to renew the authorisation token?'))) {
 			void EncryptionService.instance()
 				.generateApiToken()
+			// eslint-disable-next-line promise/prefer-await-to-then -- Old code before rule was applied
 				.then((token) => {
 					Setting.setValue('api.token', token);
 				});
 		}
 	}
 
-	render() {
+	public render() {
 		const theme = themeStyle(this.props.themeId);
 
-		const containerStyle = Object.assign({}, theme.containerStyle, {
+		const containerStyle: CSSProperties = { ...theme.containerStyle,
 			overflowY: 'scroll',
-			padding: theme.configScreenPadding,
-			backgroundColor: theme.backgroundColor3,
-		});
+			// padding: theme.configScreenPadding,
+			backgroundColor: theme.backgroundColor3 };
 
-		const buttonStyle = Object.assign({}, theme.buttonStyle, { marginRight: 10 });
+		const buttonStyle = { ...theme.buttonStyle, marginRight: 10 };
 
 		const stepBoxStyle = {
 			border: '1px solid',
@@ -81,51 +74,50 @@ class ClipperConfigScreenComponent extends React.Component {
 			webClipperStatusComps.push(
 				<p key="text_1" style={theme.textStyle}>
 					<b>{_('The web clipper service is enabled and set to auto-start.')}</b>
-				</p>
+				</p>,
 			);
 			if (this.props.clipperServer.startState === 'started') {
 				webClipperStatusComps.push(
 					<p key="text_2" style={theme.textStyle}>
 						{_('Status: Started on port %d', this.props.clipperServer.port)}
-					</p>
+					</p>,
 				);
 			} else {
 				webClipperStatusComps.push(
 					<p key="text_3" style={theme.textStyle}>
 						{_('Status: %s', this.props.clipperServer.startState)}
-					</p>
+					</p>,
 				);
 			}
 			webClipperStatusComps.push(
 				<button key="disable_button" style={buttonStyle} onClick={this.disableClipperServer_click}>
 					{_('Disable Web Clipper Service')}
-				</button>
+				</button>,
 			);
 		} else {
 			webClipperStatusComps.push(
 				<p key="text_4" style={theme.textStyle}>
 					{_('The web clipper service is not enabled.')}
-				</p>
+				</p>,
 			);
 			webClipperStatusComps.push(
 				<button key="enable_button" style={buttonStyle} onClick={this.enableClipperServer_click}>
 					{_('Enable Web Clipper Service')}
-				</button>
+				</button>,
 			);
 		}
 
-		const apiTokenStyle = Object.assign({}, theme.textStyle, {
+		const apiTokenStyle: CSSProperties = { ...theme.textStyle,
 			color: theme.colorFaded,
 			wordBreak: 'break-all',
 			paddingTop: 10,
-			paddingBottom: 10,
-		});
+			paddingBottom: 10 };
 
 		return (
 			<div>
 				<div style={containerStyle}>
 					<div>
-						<p style={Object.assign({}, theme.textStyle, { marginTop: 0 })}>{_('Joplin Web Clipper allows saving web pages and screenshots from your browser to Joplin.')}</p>
+						<p style={{ ...theme.textStyle, marginTop: 0 }}>{_('Joplin Web Clipper allows saving web pages and screenshots from your browser to Joplin.')}</p>
 						<p style={theme.textStyle}>{_('In order to use the web clipper, you need to do the following:')}</p>
 
 						<div style={stepBoxStyle}>

@@ -1,8 +1,8 @@
-import { afterAllTests, beforeAllDb, beforeEachDb, db, expectThrow, models } from '../../../utils/testing/testUtils';
+import { afterAllTests, beforeAllDb, beforeEachDb, db, dbSlave, expectThrow, models } from '../../../utils/testing/testUtils';
 import { StorageDriverType } from '../../../utils/types';
 import loadStorageDriver from './loadStorageDriver';
 
-describe('loadStorageDriver', function() {
+describe('loadStorageDriver', () => {
 
 	beforeAll(async () => {
 		await beforeAllDb('loadStorageDriver');
@@ -16,21 +16,21 @@ describe('loadStorageDriver', function() {
 		await beforeEachDb();
 	});
 
-	test('should load a driver and assign an ID to it', async function() {
+	test('should load a driver and assign an ID to it', async () => {
 		{
-			const newDriver = await loadStorageDriver({ type: StorageDriverType.Memory }, db());
+			const newDriver = await loadStorageDriver({ type: StorageDriverType.Memory }, db(), dbSlave());
 			expect(newDriver.storageId).toBe(1);
 			expect((await models().storage().count())).toBe(1);
 		}
 
 		{
-			const newDriver = await loadStorageDriver({ type: StorageDriverType.Filesystem, path: '/just/testing' }, db());
+			const newDriver = await loadStorageDriver({ type: StorageDriverType.Filesystem, path: '/just/testing' }, db(), dbSlave());
 			expect(newDriver.storageId).toBe(2);
 			expect((await models().storage().count())).toBe(2);
 		}
 	});
 
-	test('should not record the same storage connection twice', async function() {
+	test('should not record the same storage connection twice', async () => {
 		await db()('storages').insert({
 			connection_string: 'Type=Database',
 			updated_time: Date.now(),
@@ -42,7 +42,7 @@ describe('loadStorageDriver', function() {
 				connection_string: 'Type=Database',
 				updated_time: Date.now(),
 				created_time: Date.now(),
-			})
+			}),
 		);
 	});
 

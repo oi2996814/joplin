@@ -6,13 +6,17 @@ import propsHaveChanged from './propsHaveChanged';
 const { createSelectorCreator, defaultMemoize } = require('reselect');
 const { createCachedSelector } = require('re-reselect');
 
-interface MenuItem {
-	id: string;
-	label: string;
-	click: Function;
+export interface MenuItem {
+	id?: string;
+	label?: string;
+	// eslint-disable-next-line @typescript-eslint/ban-types -- Old code before rule was applied
+	click?: ()=> void;
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	role?: any;
+	type?: 'normal'|'separator'|'submenu';
 	accelerator?: string;
-	enabled: boolean;
+	checked?: boolean;
+	enabled?: boolean;
 }
 
 interface MenuItems {
@@ -20,10 +24,12 @@ interface MenuItems {
 }
 
 interface MenuItemProps {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	[key: string]: any;
 }
 
 interface MenuItemPropsCache {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	[key: string]: any;
 }
 
@@ -33,21 +39,25 @@ interface MenuItemCache {
 
 const createShallowObjectEqualSelector = createSelectorCreator(
 	defaultMemoize,
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	(prev: any, next: any) => {
 		if (Object.keys(prev).length !== Object.keys(next).length) return false;
 		for (const n in prev) {
 			if (prev[n] !== next[n]) return false;
 		}
 		return true;
-	}
+	},
 );
 
 // This selector ensures that for the given command names, the same toolbar
 // button array is returned if the underlying toolbar buttons have not changed.
 const selectObjectByCommands = createCachedSelector(
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	(state: any) => state.array,
-	(array: any[]) => array
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+	(array: any[]) => array,
 )({
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	keySelector: (_state: any, commandNames: string[]) => {
 		return commandNames.join('_');
 	},
@@ -60,7 +70,7 @@ export default class MenuUtils {
 	private menuItemCache_: MenuItemCache = {};
 	private menuItemPropsCache_: MenuItemPropsCache = {};
 
-	constructor(service: CommandService) {
+	public constructor(service: CommandService) {
 		this.service_ = service;
 	}
 
@@ -72,6 +82,7 @@ export default class MenuUtils {
 		return KeymapService.instance();
 	}
 
+	// eslint-disable-next-line @typescript-eslint/ban-types -- Old code before rule was applied
 	public commandToMenuItem(commandName: string, onClick: Function): MenuItem {
 		const command = this.service.commandByName(commandName);
 
@@ -91,14 +102,20 @@ export default class MenuUtils {
 		return item;
 	}
 
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	public commandToStatefulMenuItem(commandName: string, ...args: any[]): MenuItem {
-		return this.commandToMenuItem(commandName, () => {
+		const whenClauseContext = this.service.currentWhenClauseContext();
+
+		const menuItem = this.commandToMenuItem(commandName, () => {
 			return this.service.execute(commandName, ...args);
 		});
+		menuItem.enabled = this.service.isEnabled(commandName, whenClauseContext);
+		return menuItem;
 	}
 
-	public commandsToMenuItems(commandNames: string[], onClick: Function): MenuItems {
-		const key: string = `${this.keymapService.lastSaveTime}_${commandNames.join('_')}`;
+	// eslint-disable-next-line @typescript-eslint/ban-types -- Old code before rule was applied
+	public commandsToMenuItems(commandNames: string[], onClick: Function, locale: string): MenuItems {
+		const key = `${this.keymapService.lastSaveTime}_${commandNames.join('_')}_${locale}`;
 		if (this.menuItemCache_[key]) return this.menuItemCache_[key];
 
 		const output: MenuItems = {};
@@ -107,11 +124,14 @@ export default class MenuUtils {
 			output[commandName] = this.commandToMenuItem(commandName, onClick);
 		}
 
-		this.menuItemCache_[key] = output;
+		this.menuItemCache_ = {
+			[key]: output,
+		};
 
 		return output;
 	}
 
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	public commandsToMenuItemProps(commandNames: string[], whenClauseContext: any): MenuItemProps {
 		const output: MenuItemProps = {};
 
@@ -143,6 +163,7 @@ export default class MenuUtils {
 			output.push(menuItem);
 		}
 
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 		if (output.length) output.splice(0, 0, { type: 'separator' } as any);
 
 		return output;

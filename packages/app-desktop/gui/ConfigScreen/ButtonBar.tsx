@@ -3,23 +3,29 @@ import Button, { ButtonLevel } from '../Button/Button';
 import { _ } from '@joplin/lib/locale';
 const styled = require('styled-components').default;
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied;
+type StyleProps = any;
+
 interface Props {
 	backButtonTitle?: string;
 	hasChanges?: boolean;
+	// eslint-disable-next-line @typescript-eslint/ban-types -- Old code before rule was applied
 	onCancelClick: Function;
+	// eslint-disable-next-line @typescript-eslint/ban-types -- Old code before rule was applied
 	onSaveClick?: Function;
+	// eslint-disable-next-line @typescript-eslint/ban-types -- Old code before rule was applied
 	onApplyClick?: Function;
 }
 
-export const StyledRoot = styled.div`
+const StyledRoot = styled.nav`
 	display: flex;
 	align-items: center;
 	padding: 10px;
-	background-color: ${(props: any) => props.theme.backgroundColor3};
-	padding-left: ${(props: any) => props.theme.configScreenPadding}px;
+	background-color: ${(props: StyleProps) => props.theme.backgroundColor3};
+	padding-left: ${(props: StyleProps) => props.theme.configScreenPadding}px;
 	border-top-width: 1px;
 	border-top-style: solid;
-	border-top-color: ${(props: any) => props.theme.dividerColor};
+	border-top-color: ${(props: StyleProps) => props.theme.dividerColor};
 `;
 
 export default function ButtonBar(props: Props) {

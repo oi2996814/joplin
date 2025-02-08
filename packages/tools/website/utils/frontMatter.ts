@@ -1,28 +1,35 @@
+import * as yaml from 'js-yaml';
+
 const moment = require('moment');
 
-export interface MarkdownAndFrontMatter {
-	doc: string;
+export interface FrontMatter {
 	created?: Date;
 	updated?: Date;
 	source_url?: string;
+	forum_url?: string;
+	tweet?: string;
+
+	// Docusaurus
+	sidebar_label?: string;
+	sidebar_position?: number;
+	date?: string;
+	title?: string;
+	description?: string;
+	image?: string;
 }
 
-const readProp = (line: string): string[] => {
-	line = line.trim();
-	const d = line.indexOf(':');
-	return [line.substr(0, d).trim(), line.substr(d + 1).trim()];
-};
+export interface MarkdownAndFrontMatter {
+	doc: string;
+	header: FrontMatter;
+}
 
 export const stripOffFrontMatter = (md: string): MarkdownAndFrontMatter => {
-	if (md.indexOf('---') !== 0) return { doc: md };
+	if (md.indexOf('---') !== 0) return { doc: md, header: {} };
 
-	let state: string = 'start';
+	let state = 'start';
 	const lines = md.split('\n');
 	const docLines: string[] = [];
-
-	const output: MarkdownAndFrontMatter = {
-		doc: '',
-	};
+	const headerLines: string[] = [];
 
 	for (const line of lines) {
 		if (state === 'start') {
@@ -38,10 +45,7 @@ export const stripOffFrontMatter = (md: string): MarkdownAndFrontMatter => {
 			}
 
 			const propLine = line.trim();
-			if (propLine) {
-				const p = readProp(propLine);
-				(output as any)[p[0]] = p[1];
-			}
+			headerLines.push(propLine);
 		}
 
 		if (state === 'out') {
@@ -55,10 +59,47 @@ export const stripOffFrontMatter = (md: string): MarkdownAndFrontMatter => {
 
 	if (state !== 'doc') throw new Error('Front matter block was not closed with "---"');
 
-	output.doc = docLines.join('\n');
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+	const header: Record<string, any> = yaml.load(headerLines.join('\n'), { schema: yaml.FAILSAFE_SCHEMA });
 
-	if (output.created) output.created = moment(output.created).toDate();
-	if (output.updated) output.updated = moment(output.updated).toDate();
+	if (header.created) header.created = moment(header.created).toDate();
+	if (header.updated) header.updated = moment(header.updated).toDate();
+	if ('sidebar_position' in header) header.sidebar_position = Number(header.sidebar_position);
 
-	return output;
+	return { header, doc: docLines.join('\n') };
+};
+
+// ---
+// created: 2021-07-05T09:42:47.000+00:00
+// source_url: https://www.patreon.com/posts/any-ideas-for-53317699
+// ---
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+const formatFrontMatterValue = (key: string, value: any) => {
+	if (['created', 'updated'].includes(key)) {
+		return moment((value as Date)).toISOString();
+	} else {
+		return value.toString();
+	}
+};
+
+export const compileWithFrontMatter = (md: MarkdownAndFrontMatter): string => {
+	const output: string[] = [];
+
+	if (Object.keys(md.header).length) {
+		const header = { ...md.header };
+		for (const [key, value] of Object.entries(header)) {
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+			(header as any)[key] = formatFrontMatterValue(key, value);
+		}
+		const headerString = yaml.dump(header, { noCompatMode: true, schema: yaml.FAILSAFE_SCHEMA, lineWidth: 100000 });
+		output.push('---');
+		output.push(headerString.trim());
+		output.push('---');
+		output.push('');
+	}
+
+	output.push(md.doc);
+
+	return output.join('\n');
 };

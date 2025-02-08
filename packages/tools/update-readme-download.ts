@@ -1,7 +1,7 @@
 import * as fs from 'fs-extra';
 import { fileExtension } from '@joplin/lib/path-utils';
 import { gitHubLatestRelease, GitHubRelease } from './tool-utils';
-const readmePath = `${__dirname}/../../README.md`;
+const destMarkdownPath = `${__dirname}/../../readme/install.md`;
 
 async function msleep(ms: number) {
 	return new Promise((resolve) => {
@@ -11,7 +11,16 @@ async function msleep(ms: number) {
 	});
 }
 
-function downloadUrl(release: GitHubRelease, os: string, portable = false) {
+export enum OS {
+	MacOs = 'macos',
+	MacOsM1 = 'macosm1',
+	Windows = 'windows',
+	Android = 'android',
+	Android32 = 'android32',
+	Linux = 'linux',
+}
+
+export const downloadUrl = (release: GitHubRelease, os: OS, portable = false) => {
 	if (!release || !release.assets || !release.assets.length) return null;
 
 	for (let i = 0; i < release.assets.length; i++) {
@@ -19,36 +28,45 @@ function downloadUrl(release: GitHubRelease, os: string, portable = false) {
 		const name = asset.name;
 		const ext = fileExtension(name);
 
-		if (ext === 'dmg' && os === 'macos') return asset.browser_download_url;
+		const githubAndroidUrl = 'github.com/laurent22/joplin-android/releases/download/android-';
+		const githubUrl = 'github.com/laurent22/joplin/releases/download/';
+		const joplinDomain = 'objects.joplinusercontent.com/';
 
-		if (ext === 'exe' && os === 'windows') {
+		if (name.endsWith('arm64.DMG') && os === OS.MacOsM1) {
+			return asset.browser_download_url.replace(githubUrl, joplinDomain);
+		} else if (ext === 'dmg' && os === OS.MacOs) {
+			return asset.browser_download_url.replace(githubUrl, joplinDomain);
+		}
+
+		if (ext === 'exe' && os === OS.Windows) {
 			if (portable) {
-				if (name === 'JoplinPortable.exe') return asset.browser_download_url;
+				if (name === 'JoplinPortable.exe') return asset.browser_download_url.replace(githubUrl, joplinDomain);
 			} else {
-				if (name.match(/^Joplin-Setup-[\d.]+\.exe$/)) return asset.browser_download_url;
+				if (name.match(/^Joplin-Setup-[\d.]+\.exe$/)) return asset.browser_download_url.replace(githubUrl, joplinDomain);
 			}
 		}
 
-		if (ext === 'AppImage' && os === 'linux') return asset.browser_download_url;
+		if (ext === 'AppImage' && os === OS.Linux) return asset.browser_download_url.replace(githubUrl, joplinDomain);
 
-		if (os === 'android32' && name.endsWith('32bit.apk')) return asset.browser_download_url;
+		if (os === OS.Android32 && name.endsWith('32bit.apk')) return asset.browser_download_url.replace(githubAndroidUrl, joplinDomain);
 
-		if (os === 'android' && ext === 'apk' && !name.endsWith('32bit.apk')) return asset.browser_download_url;
+		if (os === OS.Android && ext === 'apk' && !name.endsWith('32bit.apk')) return asset.browser_download_url.replace(githubAndroidUrl, joplinDomain);
 	}
 
 	throw new Error(`Could not find download URL for: ${os}`);
-}
+};
 
 function readmeContent() {
-	if (!fs.existsSync(readmePath)) throw new Error(`Cannot find ${readmePath}`);
-	return fs.readFileSync(readmePath, 'utf8');
+	if (!fs.existsSync(destMarkdownPath)) throw new Error(`Cannot find ${destMarkdownPath}`);
+	return fs.readFileSync(destMarkdownPath, 'utf8');
 }
 
 function setReadmeContent(content: string) {
-	if (!fs.existsSync(readmePath)) throw new Error(`Cannot find ${readmePath}`);
-	return fs.writeFileSync(readmePath, content);
+	if (!fs.existsSync(destMarkdownPath)) throw new Error(`Cannot find ${destMarkdownPath}`);
+	return fs.writeFileSync(destMarkdownPath, content);
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 async function main(argv: any) {
 	const waitForVersion = argv.length === 3 ? argv[2] : null;
 
@@ -69,39 +87,37 @@ async function main(argv: any) {
 
 	const androidRelease = await gitHubLatestRelease('joplin-android');
 
-	const android32Url = downloadUrl(androidRelease, 'android32');
-	const androidUrl = downloadUrl(androidRelease, 'android');
-	const winUrl = downloadUrl(release, 'windows');
-	const winPortableUrl = downloadUrl(release, 'windows', true);
-	const macOsUrl = downloadUrl(release, 'macos');
-	const linuxUrl = downloadUrl(release, 'linux');
+	const androidUrl = downloadUrl(androidRelease, OS.Android);
+	const winUrl = downloadUrl(release, OS.Windows);
+	const winPortableUrl = downloadUrl(release, OS.Windows, true);
+	const macOsUrl = downloadUrl(release, OS.MacOs);
+	const macOsM1Url = downloadUrl(release, OS.MacOsM1);
+	const linuxUrl = downloadUrl(release, OS.Linux);
 
 	console.info('Windows: ', winUrl);
 	console.info('Windows Portable: ', winPortableUrl);
 	console.info('macOS: ', macOsUrl);
+	console.info('macOSM1: ', macOsM1Url);
 	console.info('Linux: ', linuxUrl);
 	console.info('Android: ', androidUrl);
-	console.info('Android 32: ', android32Url);
 
 	let content = readmeContent();
 
-	if (winUrl) content = content.replace(/(https:\/\/github.com\/laurent22\/joplin\/releases\/download\/v\d+\.\d+\.\d+\/Joplin-Setup-.*?\.exe)/, winUrl);
-	if (winPortableUrl) content = content.replace(/(https:\/\/github.com\/laurent22\/joplin\/releases\/download\/v\d+\.\d+\.\d+\/JoplinPortable.exe)/, winPortableUrl);
-	if (macOsUrl) content = content.replace(/(https:\/\/github.com\/laurent22\/joplin\/releases\/download\/v\d+\.\d+\.\d+\/Joplin-.*?\.dmg)/, macOsUrl);
-	if (linuxUrl) content = content.replace(/(https:\/\/github.com\/laurent22\/joplin\/releases\/download\/v\d+\.\d+\.\d+\/Joplin-.*?\.AppImage)/, linuxUrl);
-
-	// Disable for now due to broken /latest API end point, which returns a
-	// version from 6 months ago.
-
-	if (androidUrl) content = content.replace(/(https:\/\/github.com\/laurent22\/joplin-android\/releases\/download\/android-v\d+\.\d+\.\d+\/joplin-v\d+\.\d+\.\d+\.apk)/, androidUrl);
-	if (android32Url) content = content.replace(/(https:\/\/github.com\/laurent22\/joplin-android\/releases\/download\/android-v\d+\.\d+\.\d+\/joplin-v\d+\.\d+\.\d+-32bit\.apk)/, android32Url);
+	if (winUrl) content = content.replace(/(https:\/\/objects.joplinusercontent.com\/v\d+\.\d+\.\d+\/Joplin-Setup-.*?\.exe)/, winUrl);
+	if (winPortableUrl) content = content.replace(/(https:\/\/objects.joplinusercontent.com\/v\d+\.\d+\.\d+\/JoplinPortable.exe)/, winPortableUrl);
+	if (macOsUrl) content = content.replace(/(https:\/\/objects.joplinusercontent.com\/v\d+\.\d+\.\d+\/Joplin-.*?\.dmg)/, macOsUrl);
+	if (macOsM1Url) content = content.replace(/(https:\/\/objects.joplinusercontent.com\/v\d+\.\d+\.\d+\/Joplin-.*?arm64\.DMG)/, macOsM1Url);
+	if (linuxUrl) content = content.replace(/(https:\/\/objects.joplinusercontent.com\/v\d+\.\d+\.\d+\/Joplin-.*?\.AppImage)/, linuxUrl);
+	if (androidUrl) content = content.replace(/(https:\/\/objects.joplinusercontent.com\/v\d+\.\d+\.\d+\/joplin-v\d+\.\d+\.\d+\.apk)/, androidUrl);
 
 	setReadmeContent(content);
-
-	// console.info("git pull && git add -A && git commit -m 'Update readme downloads' && git push")
 }
 
-main(process.argv).catch((error) => {
-	console.error('Fatal error', error);
-	process.exit(1);
-});
+if (require.main === module) {
+	// eslint-disable-next-line promise/prefer-await-to-then
+	main(process.argv).catch((error) => {
+		console.error('Fatal error');
+		console.error(error);
+		process.exit(1);
+	});
+}

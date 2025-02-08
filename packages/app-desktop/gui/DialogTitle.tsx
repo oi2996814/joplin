@@ -1,6 +1,7 @@
 import styled from 'styled-components';
 
-const Root = styled.div<any>`
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+const Root = styled.h1<any>`
 	display: flex;
 	justify-content: ${props => props.justifyContent ? props.justifyContent : 'center'};
 	font-family: ${props => props.theme.fontFamily};

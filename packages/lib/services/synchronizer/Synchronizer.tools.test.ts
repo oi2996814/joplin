@@ -4,13 +4,12 @@ import Folder from '../../models/Folder';
 import Note from '../../models/Note';
 import { clearLocalDataForRedownload, clearLocalSyncStateForReupload } from '../../services/synchronizer/tools';
 
-describe('Synchronizer.tools', function() {
+describe('Synchronizer.tools', () => {
 
-	beforeEach(async (done) => {
+	beforeEach(async () => {
 		await setupDatabaseAndSynchronizer(1);
 		await setupDatabaseAndSynchronizer(2);
 		await switchClient(1);
-		done();
 	});
 
 	afterAll(async () => {
@@ -34,7 +33,7 @@ describe('Synchronizer.tools', function() {
 		expect((await Folder.all()).length).toBe(1);
 	}));
 
-	it('should clear local data, and re-downlaod everything from sync target', (async () => {
+	it('should clear local data, and re-download everything from sync target', (async () => {
 		const folder = await Folder.save({ title: 'test' });
 		await Note.save({ title: 'test note', parent_id: folder.id });
 

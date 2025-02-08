@@ -1,40 +1,61 @@
-import { useCallback } from 'react';
+import { useCallback, useContext } from 'react';
 
-const { ToastAndroid } = require('react-native');
 const { _ } = require('@joplin/lib/locale.js');
-import { reg } from '@joplin/lib/registry';
-const { dialogs } = require('../../../utils/dialogs.js');
 import Resource from '@joplin/lib/models/Resource';
 import { copyToCache } from '../../../utils/ShareUtils';
-const Share = require('react-native-share').default;
+import isEditableResource from '../../NoteEditor/ImageEditor/isEditableResource';
+import shim from '@joplin/lib/shim';
+import shareFile from '../../../utils/shareFile';
+import Logger from '@joplin/utils/Logger';
+import { DialogContext } from '../../DialogManager';
 
-export default function useOnResourceLongPress(onJoplinLinkClick: Function, dialogBoxRef: any) {
+const logger = Logger.create('useOnResourceLongPress');
+
+interface Callbacks {
+	onJoplinLinkClick: (link: string)=> void;
+	onRequestEditResource: (message: string)=> void;
+}
+
+export default function useOnResourceLongPress(callbacks: Callbacks) {
+	const { onJoplinLinkClick, onRequestEditResource } = callbacks;
+
+	const dialogManager = useContext(DialogContext);
+
 	return useCallback(async (msg: string) => {
 		try {
 			const resourceId = msg.split(':')[1];
 			const resource = await Resource.load(resourceId);
-			const name = resource.title ? resource.title : resource.file_name;
 
-			const action = await dialogs.pop({ dialogbox: dialogBoxRef.current }, name, [
-				{ text: _('Open'), id: 'open' },
-				{ text: _('Share'), id: 'share' },
-			]);
+			// Handle the case where it's a long press on a link with no resource
+			if (!resource) {
+				logger.warn(`Long-press: Resource with ID ${resourceId} does not exist (may be a note).`);
+				return;
+			}
+
+			const name = resource.title ? resource.title : resource.filename;
+			const mime: string|undefined = resource.mime;
+
+			const actions = [];
+
+			actions.push({ text: _('Open'), id: 'open' });
+			if (mime && isEditableResource(mime)) {
+				actions.push({ text: _('Edit'), id: 'edit' });
+			}
+			actions.push({ text: _('Share'), id: 'share' });
+
+			const action = await dialogManager.showMenu(name, actions);
 
 			if (action === 'open') {
 				onJoplinLinkClick(`joplin://${resourceId}`);
 			} else if (action === 'share') {
 				const fileToShare = await copyToCache(resource);
-
-				await Share.open({
-					type: resource.mime,
-					filename: resource.title,
-					url: `file://${fileToShare}`,
-					failOnCancel: false,
-				});
+				await shareFile(fileToShare, resource.mime);
+			} else if (action === 'edit') {
+				onRequestEditResource(`edit:${resourceId}`);
 			}
 		} catch (e) {
-			reg.logger().error('Could not handle link long press', e);
-			ToastAndroid.show('An error occurred, check log for details', ToastAndroid.SHORT);
+			logger.error('Could not handle link long press', e);
+			void shim.showErrorDialog(`An error occurred, check log for details: ${e}`);
 		}
-	}, [onJoplinLinkClick]);
+	}, [onJoplinLinkClick, onRequestEditResource, dialogManager]);
 }

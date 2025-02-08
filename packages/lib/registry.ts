@@ -1,23 +1,30 @@
-import Logger from './Logger';
+import Logger from '@joplin/utils/Logger';
 import Setting from './models/Setting';
 import shim from './shim';
 import SyncTargetRegistry from './SyncTargetRegistry';
+import { AnyAction, Dispatch } from 'redux';
 
 class Registry {
 
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	private syncTargets_: any = {};
 	private logger_: Logger = null;
 	private schedSyncCalls_: boolean[] = [];
-	private waitForReSyncCalls_: boolean[]= [];
+	private waitForReSyncCalls_: boolean[] = [];
 	private setupRecurrentCalls_: boolean[] = [];
 	private timerCallbackCalls_: boolean[] = [];
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	private showErrorMessageBoxHandler_: any;
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	private scheduleSyncId_: any;
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	private recurrentSyncId_: any;
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	private db_: any;
 	private isOnMobileData_ = false;
+	private dispatch_: Dispatch = (() => {}) as Dispatch;
 
-	logger() {
+	public logger() {
 		if (!this.logger_) {
 			// console.warn('Calling logger before it is initialized');
 			return new Logger();
@@ -26,35 +33,44 @@ class Registry {
 		return this.logger_;
 	}
 
-	setLogger(l: Logger) {
+	public setLogger(l: Logger) {
 		this.logger_ = l;
 	}
 
-	setShowErrorMessageBoxHandler(v: any) {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+	public setShowErrorMessageBoxHandler(v: any) {
 		this.showErrorMessageBoxHandler_ = v;
 	}
 
-	showErrorMessageBox(message: string) {
+	public showErrorMessageBox(message: string) {
 		if (!this.showErrorMessageBoxHandler_) return;
 		this.showErrorMessageBoxHandler_(message);
 	}
 
+	public setDispatch(dispatch: Dispatch) {
+		this.dispatch_ = dispatch;
+	}
+
+	private dispatch(action: AnyAction) {
+		return this.dispatch_(action);
+	}
+
 	// If isOnMobileData is true, the doWifiConnectionCheck is not set
 	// and the sync.mobileWifiOnly setting is true it will cancel the sync.
-	setIsOnMobileData(isOnMobileData: boolean) {
+	public setIsOnMobileData(isOnMobileData: boolean) {
 		this.isOnMobileData_ = isOnMobileData;
 	}
 
-	resetSyncTarget(syncTargetId: number = null) {
+	public resetSyncTarget(syncTargetId: number = null) {
 		if (syncTargetId === null) syncTargetId = Setting.value('sync.target');
 		delete this.syncTargets_[syncTargetId];
 	}
 
-	syncTargetNextcloud() {
+	public syncTargetNextcloud() {
 		return this.syncTarget(SyncTargetRegistry.nameToId('nextcloud'));
 	}
 
-	syncTarget = (syncTargetId: number = null) => {
+	public syncTarget = (syncTargetId: number = null) => {
 		if (syncTargetId === null) syncTargetId = Setting.value('sync.target');
 		if (this.syncTargets_[syncTargetId]) return this.syncTargets_[syncTargetId];
 
@@ -70,7 +86,7 @@ class Registry {
 	// This can be used when some data has been modified and we want to make
 	// sure it gets synced. So we wait for the current sync operation to
 	// finish (if one is running), then we trigger a sync just after.
-	waitForSyncFinishedThenSync = async () => {
+	public waitForSyncFinishedThenSync = async () => {
 		if (!Setting.value('sync.target')) {
 			this.logger().info('waitForSyncFinishedThenSync - cancelling because no sync target is selected.');
 			return;
@@ -86,13 +102,15 @@ class Registry {
 		}
 	};
 
-	scheduleSync = async (delay: number = null, syncOptions: any = null, doWifiConnectionCheck: boolean = false) => {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+	public scheduleSync = async (delay: number = null, syncOptions: any = null, doWifiConnectionCheck = false) => {
 		this.schedSyncCalls_.push(true);
 
 		try {
 			if (delay === null) delay = 1000 * 10;
 			if (syncOptions === null) syncOptions = {};
 
+			// eslint-disable-next-line @typescript-eslint/ban-types -- Old code before rule was applied
 			let promiseResolve: Function = null;
 			const promise = new Promise((resolve) => {
 				promiseResolve = resolve;
@@ -131,10 +149,18 @@ class Registry {
 					}
 
 					if (!(await this.syncTarget(syncTargetId).isAuthenticated())) {
+						this.dispatch({
+							type: 'MUST_AUTHENTICATE',
+							value: true,
+						});
 						this.logger().info('Synchroniser is missing credentials - manual sync required to authenticate.');
 						promiseResolve();
 						return;
 					}
+					this.dispatch({
+						type: 'MUST_AUTHENTICATE',
+						value: false,
+					});
 
 					try {
 						const sync = await this.syncTarget(syncTargetId).synchronizer();
@@ -154,8 +180,9 @@ class Registry {
 
 						try {
 							this.logger().info('Starting scheduled sync');
-							const options = Object.assign({}, syncOptions, { context: context });
+							const options = { ...syncOptions, context: context };
 							if (!options.saveContextHandler) {
+								// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 								options.saveContextHandler = (newContext: any) => {
 									Setting.setValue(contextKey, JSON.stringify(newContext));
 								};
@@ -163,7 +190,7 @@ class Registry {
 							const newContext = await sync.start(options);
 							Setting.setValue(contextKey, JSON.stringify(newContext));
 						} catch (error) {
-							if (error.code == 'alreadyStarted') {
+							if (error.code === 'alreadyStarted') {
 								this.logger().info(error.message);
 							} else {
 								promiseResolve();
@@ -194,7 +221,7 @@ class Registry {
 		}
 	};
 
-	setupRecurrentSync() {
+	public setupRecurrentSync() {
 		this.setupRecurrentCalls_.push(true);
 
 		try {
@@ -223,15 +250,16 @@ class Registry {
 		}
 	}
 
-	setDb = (v: any) => {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+	public setDb = (v: any) => {
 		this.db_ = v;
 	};
 
-	db() {
+	public db() {
 		return this.db_;
 	}
 
-	cancelTimers_() {
+	private cancelTimers_() {
 		if (this.recurrentSyncId_) {
 			shim.clearInterval(this.recurrentSyncId_);
 			this.recurrentSyncId_ = null;
@@ -242,7 +270,7 @@ class Registry {
 		}
 	}
 
-	cancelTimers = async () => {
+	public cancelTimers = async () => {
 		this.logger().info('Cancelling sync timers');
 		this.cancelTimers_();
 
@@ -258,6 +286,8 @@ class Registry {
 	};
 
 }
+
+export type { Registry };
 
 const reg = new Registry();
 

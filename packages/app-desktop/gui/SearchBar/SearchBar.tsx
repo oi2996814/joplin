@@ -8,6 +8,7 @@ import uuid from '@joplin/lib/uuid';
 const { connect } = require('react-redux');
 import Note from '@joplin/lib/models/Note';
 import { AppState } from '../../app.reducer';
+import { blur, focus } from '@joplin/lib/utils/focusHandler';
 const debounce = require('debounce');
 const styled = require('styled-components').default;
 
@@ -15,11 +16,14 @@ export const Root = styled.div`
 	position: relative;
 	display: flex;
 	width: 100%;
+	min-width: 30px;
 `;
 
 interface Props {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	inputRef?: any;
 	notesParentType: string;
+	// eslint-disable-next-line @typescript-eslint/ban-types -- Old code before rule was applied
 	dispatch?: Function;
 	selectedNoteId: string;
 	isFocused?: boolean;
@@ -31,6 +35,7 @@ function SearchBar(props: Props) {
 	const searchId = useRef(uuid.create());
 
 	useEffect(() => {
+		// eslint-disable-next-line @typescript-eslint/ban-types -- Old code before rule was applied
 		function search(searchId: string, query: string, dispatch: Function) {
 			dispatch({
 				type: 'SEARCH_UPDATE',
@@ -54,6 +59,7 @@ function SearchBar(props: Props) {
 		return () => {
 			debouncedSearch.clear();
 		};
+		// eslint-disable-next-line @seiyab/react-hooks/exhaustive-deps -- Old code before rule was applied
 	}, [query, searchStarted]);
 
 	const onExitSearch = useCallback(async (navigateAway = true) => {
@@ -79,8 +85,10 @@ function SearchBar(props: Props) {
 				}
 			}
 		}
+		// eslint-disable-next-line @seiyab/react-hooks/exhaustive-deps -- Old code before rule was applied
 	}, [props.selectedNoteId]);
 
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	function onChange(event: any) {
 		if (event.value.length === 0) {
 			// Revert to previous state if query string becomes empty
@@ -110,33 +118,50 @@ function SearchBar(props: Props) {
 		}, 300);
 	}
 
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	const onKeyDown = useCallback((event: any) => {
 		if (event.key === 'Escape') {
-			if (document.activeElement) (document.activeElement as any).blur();
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+			if (document.activeElement) blur('SearchBar::onKeyDown', document.activeElement as any);
 			void onExitSearch();
 		}
 	}, [onExitSearch]);
 
 	const onSearchButtonClick = useCallback(() => {
-		console.info('isFocused', props.isFocused);
-
-		if (props.isFocused) {
+		if (props.isFocused || searchStarted) {
 			void onExitSearch();
 		} else {
 			setSearchStarted(true);
-			props.inputRef.current.focus();
+			focus('SearchBar::onSearchButtonClick', props.inputRef.current);
 			props.dispatch({
 				type: 'FOCUS_SET',
 				field: 'globalSearch',
 			});
 		}
-	}, [onExitSearch, props.isFocused]);
+		// eslint-disable-next-line @seiyab/react-hooks/exhaustive-deps -- Old code before rule was applied
+	}, [onExitSearch, props.isFocused, searchStarted]);
 
 	useEffect(() => {
 		if (props.notesParentType !== 'Search') {
 			void onExitSearch(false);
 		}
 	}, [props.notesParentType, onExitSearch]);
+
+	// When the searchbar is remounted, exit the search if it was previously open
+	// or else other buttons stay hidden (e.g. when opening Layout Editor and closing it)
+	// https://github.com/laurent22/joplin/issues/5953
+	useEffect(() => {
+		if (props.notesParentType === 'Search' || props.isFocused) {
+			if (props.isFocused) {
+				props.dispatch({
+					type: 'FOCUS_CLEAR',
+					field: 'globalSearch',
+				});
+			}
+			void onExitSearch(true);
+		}
+		// eslint-disable-next-line @seiyab/react-hooks/exhaustive-deps -- Old code before rule was applied
+	}, []);
 
 	return (
 		<Root className="search-bar">
@@ -149,6 +174,7 @@ function SearchBar(props: Props) {
 				onKeyDown={onKeyDown}
 				onSearchButtonClick={onSearchButtonClick}
 				searchStarted={searchStarted}
+				aria-controls='notes-list'
 			/>
 		</Root>
 	);

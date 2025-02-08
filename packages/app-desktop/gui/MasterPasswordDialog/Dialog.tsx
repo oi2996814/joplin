@@ -10,10 +10,12 @@ import { reg } from '@joplin/lib/registry';
 import EncryptionService from '@joplin/lib/services/e2ee/EncryptionService';
 import KvStore from '@joplin/lib/services/KvStore';
 import ShareService from '@joplin/lib/services/share/ShareService';
-import { PasswordInput } from '../PasswordInput/PasswordInput';
+import LabelledPasswordInput from '../PasswordInput/LabelledPasswordInput';
+import shim from '@joplin/lib/shim';
 
 interface Props {
 	themeId: number;
+	// eslint-disable-next-line @typescript-eslint/ban-types -- Old code before rule was applied
 	dispatch: Function;
 }
 
@@ -33,6 +35,13 @@ export default function(props: Props) {
 	const [showPasswordForm, setShowPasswordForm] = useState(false);
 	const [updatingPassword, setUpdatingPassword] = useState(false);
 	const [mode, setMode] = useState<Mode>(Mode.Set);
+
+	const showCurrentPassword = useMemo(() => {
+		if ([MasterPasswordStatus.NotSet, MasterPasswordStatus.Invalid].includes(status)) return false;
+		if (mode === Mode.Reset) return false;
+		return true;
+		// eslint-disable-next-line @seiyab/react-hooks/exhaustive-deps -- Old code before rule was applied
+	}, [status]);
 
 	const onClose = useCallback(() => {
 		props.dispatch({
@@ -63,7 +72,7 @@ export default function(props: Props) {
 			setUpdatingPassword(true);
 			try {
 				if (mode === Mode.Set) {
-					await updateMasterPassword(currentPassword, password1);
+					await updateMasterPassword(showCurrentPassword ? currentPassword : null, password1);
 				} else if (mode === Mode.Reset) {
 					await resetMasterPassword(EncryptionService.instance(), KvStore.instance(), ShareService.instance(), password1);
 				} else {
@@ -72,12 +81,13 @@ export default function(props: Props) {
 				void reg.waitForSyncFinishedThenSync();
 				onClose();
 			} catch (error) {
-				alert(error.message);
+				void shim.showErrorDialog(error.message);
 			} finally {
 				setUpdatingPassword(false);
 			}
 			return;
 		}
+		// eslint-disable-next-line @seiyab/react-hooks/exhaustive-deps -- Old code before rule was applied
 	}, [currentPassword, password1, onClose, mode]);
 
 	const needToRepeatPassword = useMemo(() => {
@@ -85,14 +95,17 @@ export default function(props: Props) {
 		return !hasMasterPasswordEncryptedData;
 	}, [hasMasterPasswordEncryptedData, mode]);
 
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	const onCurrentPasswordChange = useCallback((event: any) => {
 		setCurrentPassword(event.target.value);
 	}, []);
 
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	const onPasswordChange1 = useCallback((event: any) => {
 		setPassword1(event.target.value);
 	}, []);
 
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	const onPasswordChange2 = useCallback((event: any) => {
 		setPassword2(event.target.value);
 	}, []);
@@ -115,7 +128,7 @@ export default function(props: Props) {
 	}, [password1, password2, updatingPassword, needToRepeatPassword]);
 
 	useEffect(() => {
-		setShowPasswordForm(status === MasterPasswordStatus.NotSet);
+		setShowPasswordForm([MasterPasswordStatus.NotSet, MasterPasswordStatus.Invalid].includes(status));
 	}, [status]);
 
 	useAsyncEffect(async (event: AsyncEffectEvent) => {
@@ -124,15 +137,9 @@ export default function(props: Props) {
 		setCurrentPasswordIsValid(isValid);
 	}, [currentPassword]);
 
-	function renderCurrentPasswordIcon() {
-		if (!currentPassword || status === MasterPasswordStatus.NotSet) return null;
-		return currentPasswordIsValid ? <i className="fas fa-check password-valid-icon"></i> : <i className="fas fa-times"></i>;
-	}
-
 	function renderPasswordForm() {
 		const renderCurrentPassword = () => {
-			if (status === MasterPasswordStatus.NotSet) return null;
-			if (mode === Mode.Reset) return null;
+			if (!showCurrentPassword) return null;
 
 			// If the master password is in the keychain we preload it into the
 			// field and allow displaying it. That way if the user has forgotten
@@ -140,14 +147,14 @@ export default function(props: Props) {
 			// having to reset the password (and lose access to any data that's
 			// been encrypted with it).
 
+			const showValidIcon = currentPassword && status !== MasterPasswordStatus.NotSet;
 			return (
-				<div className="form-input-group">
-					<label>{'Current password'}</label>
-					<div className="current-password-wrapper">
-						<PasswordInput value={currentPassword} onChange={onCurrentPasswordChange}/>
-						{renderCurrentPasswordIcon()}
-					</div>
-				</div>
+				<LabelledPasswordInput
+					labelText={_('Current password')}
+					value={currentPassword}
+					onChange={onCurrentPasswordChange}
+					valid={showValidIcon ? currentPasswordIsValid : undefined}
+				/>
 			);
 		};
 
@@ -164,15 +171,17 @@ export default function(props: Props) {
 				<div>
 					<div className="form">
 						{renderCurrentPassword()}
-						<div className="form-input-group">
-							<label>{enterPasswordLabel}</label>
-							<PasswordInput value={password1} onChange={onPasswordChange1}/>
-						</div>
+						<LabelledPasswordInput
+							labelText={enterPasswordLabel}
+							value={password1}
+							onChange={onPasswordChange1}
+						/>
 						{needToRepeatPassword && (
-							<div className="form-input-group">
-								<label>{'Re-enter password'}</label>
-								<PasswordInput value={password2} onChange={onPasswordChange2}/>
-							</div>
+							<LabelledPasswordInput
+								labelText={_('Re-enter password')}
+								value={password2}
+								onChange={onPasswordChange2}
+							/>
 						)}
 					</div>
 					<p className="bold">Please make sure you remember your password. For security reasons, it is not possible to recover it if it is lost.</p>
@@ -229,6 +238,6 @@ export default function(props: Props) {
 	}
 
 	return (
-		<Dialog onClose={onClose} className="master-password-dialog" renderContent={renderDialogWrapper}/>
+		<Dialog onCancel={onClose} className="master-password-dialog">{renderDialogWrapper()}</Dialog>
 	);
 }

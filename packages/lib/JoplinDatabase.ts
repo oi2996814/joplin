@@ -1,8 +1,11 @@
 import Resource from './models/Resource';
 import shim from './shim';
-import Database, { SqlQuery } from './database';
+import Database from './database';
+import { SqlQuery } from './services/database/types';
+import addMigrationFile from './services/database/addMigrationFile';
+import sqlStringToLines from './services/database/sqlStringToLines';
+import migrations from './services/database/migrations';
 
-const { promiseChain } = require('./promise-utils.js');
 const { sprintf } = require('sprintf-js');
 
 const structureSql = `
@@ -122,6 +125,7 @@ INSERT INTO version (version) VALUES (1);
 export interface TableField {
 	name: string;
 	type: number;
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	default: any;
 	description?: string;
 }
@@ -136,8 +140,10 @@ export default class JoplinDatabase extends Database {
 	private tableFields_: Record<string, TableField[]> = null;
 	private version_: number = null;
 	private tableFieldNames_: Record<string, string[]> = {};
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	private tableDescriptions_: any;
 
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	public constructor(driver: any) {
 		super(driver);
 	}
@@ -146,6 +152,7 @@ export default class JoplinDatabase extends Database {
 		return this.initialized_;
 	}
 
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	public async open(options: any) {
 		await super.open(options);
 		return this.initialize();
@@ -164,6 +171,7 @@ export default class JoplinDatabase extends Database {
 		return output.slice();
 	}
 
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	public tableFields(tableName: string, options: any = null) {
 		if (options === null) options = {};
 
@@ -221,6 +229,7 @@ export default class JoplinDatabase extends Database {
 	}
 
 	public createDefaultRow(tableName: string) {
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 		const row: any = {};
 		const fields = this.tableFields(tableName);
 		for (let i = 0; i < fields.length; i++) {
@@ -286,61 +295,63 @@ export default class JoplinDatabase extends Database {
 		return d && d[fieldName] ? d[fieldName] : '';
 	}
 
-	public refreshTableFields(newVersion: number) {
+	private async countFields(tableName: string): Promise<number> {
+		const pragmas = await this.selectAll(`PRAGMA table_info("${tableName}")`);
+		if (!pragmas) throw new Error(`No such table: ${tableName}`);
+		return pragmas.length;
+	}
+
+	public async refreshTableFields(newVersion: number) {
 		this.logger().info('Initializing tables...');
 		const queries: SqlQuery[] = [];
 		queries.push(this.wrapQuery('DELETE FROM table_fields'));
 
-		return this.selectAll('SELECT name FROM sqlite_master WHERE type="table"')
-			.then(tableRows => {
-				const chain = [];
-				for (let i = 0; i < tableRows.length; i++) {
-					const tableName = tableRows[i].name;
-					if (tableName == 'android_metadata') continue;
-					if (tableName == 'table_fields') continue;
-					if (tableName == 'sqlite_sequence') continue;
-					if (tableName.indexOf('notes_fts') === 0) continue;
-					if (tableName == 'notes_spellfix') continue;
-					if (tableName == 'search_aux') continue;
-					chain.push(() => {
-						return this.selectAll(`PRAGMA table_info("${tableName}")`).then(pragmas => {
-							for (let i = 0; i < pragmas.length; i++) {
-								const item = pragmas[i];
-								// In SQLite, if the default value is a string it has double quotes around it, so remove them here
-								let defaultValue = item.dflt_value;
-								if (typeof defaultValue == 'string' && defaultValue.length >= 2 && defaultValue[0] == '"' && defaultValue[defaultValue.length - 1] == '"') {
-									defaultValue = defaultValue.substr(1, defaultValue.length - 2);
-								}
-								const q = Database.insertQuery('table_fields', {
-									table_name: tableName,
-									field_name: item.name,
-									field_type: Database.enumId('fieldType', item.type),
-									field_default: defaultValue,
-								});
-								queries.push(q);
-							}
-						});
-					});
+		const countFieldsNotesFts = await this.countFields('notes_fts');
+		const countFieldsItemsFts = await this.countFields('items_fts');
+		if (countFieldsNotesFts !== countFieldsItemsFts) {
+			throw new Error(`\`notes_fts\` (${countFieldsNotesFts} fields) must have the same number of fields as \`items_fts\` (${countFieldsItemsFts} fields) for the search engine BM25 algorithm to work`);
+		}
+
+		const tableRows = await this.selectAll('SELECT name FROM sqlite_master WHERE type=\'table\'');
+
+		for (let i = 0; i < tableRows.length; i++) {
+			const tableName = tableRows[i].name;
+			if (tableName === 'android_metadata') continue;
+			if (tableName === 'table_fields') continue;
+			if (tableName === 'sqlite_sequence') continue;
+			if (tableName.indexOf('notes_fts') === 0) continue;
+			if (tableName.indexOf('items_fts') === 0) continue;
+			if (tableName === 'notes_spellfix') continue;
+			if (tableName === 'search_aux') continue;
+
+			const pragmas = await this.selectAll(`PRAGMA table_info("${tableName}")`);
+
+			for (let i = 0; i < pragmas.length; i++) {
+				const item = pragmas[i];
+				// In SQLite, if the default value is a string it has double quotes around it, so remove them here
+				let defaultValue = item.dflt_value;
+				if (typeof defaultValue === 'string' && defaultValue.length >= 2 && defaultValue[0] === '"' && defaultValue[defaultValue.length - 1] === '"') {
+					defaultValue = defaultValue.substr(1, defaultValue.length - 2);
 				}
+				const q = Database.insertQuery('table_fields', {
+					table_name: tableName,
+					field_name: item.name,
+					field_type: Database.enumId('fieldType', item.type),
+					field_default: defaultValue,
+				});
+				queries.push(q);
+			}
+		}
 
-				return promiseChain(chain);
-			})
-			.then(() => {
-				queries.push({ sql: 'UPDATE version SET table_fields_version = ?', params: [newVersion] });
-				return this.transactionExecBatch(queries);
-			});
-	}
-
-	public addMigrationFile(num: number) {
-		const timestamp = Date.now();
-		return { sql: 'INSERT INTO migrations (number, created_time, updated_time) VALUES (?, ?, ?)', params: [num, timestamp, timestamp] };
+		queries.push({ sql: 'UPDATE version SET table_fields_version = ?', params: [newVersion] });
+		await this.transactionExecBatch(queries);
 	}
 
 	public async upgradeDatabase(fromVersion: number) {
 		// INSTRUCTIONS TO UPGRADE THE DATABASE:
 		//
-		// 1. Add the new version number to the existingDatabaseVersions array
-		// 2. Add the upgrade logic to the "switch (targetVersion)" statement below
+		// 1. Add the migration to lib/services/database/migrations.
+		// 2. Import the migration and add it to the `migrations` array above.
 
 		// IMPORTANT:
 		//
@@ -352,6 +363,8 @@ export default class JoplinDatabase extends Database {
 
 		// Note: v16 and v17 don't do anything. They were used to debug an issue.
 		const existingDatabaseVersions = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41];
+
+		for (let i = 0; i < migrations.length; i++) existingDatabaseVersions.push(existingDatabaseVersions[existingDatabaseVersions.length - 1] + 1);
 
 		let currentVersionIndex = existingDatabaseVersions.indexOf(fromVersion);
 
@@ -367,7 +380,7 @@ export default class JoplinDatabase extends Database {
 
 		this.logger().info(`Upgrading database from version ${fromVersion}`);
 
-		if (currentVersionIndex == existingDatabaseVersions.length - 1) return fromVersion;
+		if (currentVersionIndex === existingDatabaseVersions.length - 1) return fromVersion;
 
 		let latestVersion = fromVersion;
 
@@ -375,13 +388,13 @@ export default class JoplinDatabase extends Database {
 			const targetVersion = existingDatabaseVersions[currentVersionIndex + 1];
 			this.logger().info(`Converting database to version ${targetVersion}`);
 
-			let queries: any[] = [];
+			let queries: (SqlQuery|string)[] = [];
 
-			if (targetVersion == 1) {
-				queries = this.wrapQueries(this.sqlStringToLines(structureSql));
+			if (targetVersion === 1) {
+				queries = this.wrapQueries(sqlStringToLines(structureSql));
 			}
 
-			if (targetVersion == 2) {
+			if (targetVersion === 2) {
 				const newTableSql = `
 					CREATE TABLE deleted_items (
 						id INTEGER PRIMARY KEY,
@@ -393,20 +406,20 @@ export default class JoplinDatabase extends Database {
 				`;
 
 				queries.push({ sql: 'DROP TABLE deleted_items' });
-				queries.push({ sql: this.sqlStringToLines(newTableSql)[0] });
+				queries.push({ sql: sqlStringToLines(newTableSql)[0] });
 				queries.push({ sql: 'CREATE INDEX deleted_items_sync_target ON deleted_items (sync_target)' });
 			}
 
-			if (targetVersion == 3) {
+			if (targetVersion === 3) {
 				queries = this.alterColumnQueries('settings', { key: 'TEXT PRIMARY KEY', value: 'TEXT' });
 			}
 
-			if (targetVersion == 4) {
+			if (targetVersion === 4) {
 				queries.push('INSERT INTO settings (`key`, `value`) VALUES (\'sync.3.context\', (SELECT `value` FROM settings WHERE `key` = \'sync.context\'))');
-				queries.push('DELETE FROM settings WHERE `key` = "sync.context"');
+				queries.push('DELETE FROM settings WHERE `key` = \'sync.context\'');
 			}
 
-			if (targetVersion == 5) {
+			if (targetVersion === 5) {
 				const tableNames = ['notes', 'folders', 'tags', 'note_tags', 'resources'];
 				for (let i = 0; i < tableNames.length; i++) {
 					const n = tableNames[i];
@@ -418,21 +431,21 @@ export default class JoplinDatabase extends Database {
 				}
 			}
 
-			if (targetVersion == 6) {
+			if (targetVersion === 6) {
 				queries.push('CREATE TABLE alarms (id INTEGER PRIMARY KEY AUTOINCREMENT, note_id TEXT NOT NULL, trigger_time INT NOT NULL)');
 				queries.push('CREATE INDEX alarm_note_id ON alarms (note_id)');
 			}
 
-			if (targetVersion == 7) {
+			if (targetVersion === 7) {
 				queries.push('ALTER TABLE resources ADD COLUMN file_extension TEXT NOT NULL DEFAULT ""');
 			}
 
-			if (targetVersion == 8) {
+			if (targetVersion === 8) {
 				queries.push('ALTER TABLE sync_items ADD COLUMN sync_disabled INT NOT NULL DEFAULT "0"');
 				queries.push('ALTER TABLE sync_items ADD COLUMN sync_disabled_reason TEXT NOT NULL DEFAULT ""');
 			}
 
-			if (targetVersion == 9) {
+			if (targetVersion === 9) {
 				const newTableSql = `
 					CREATE TABLE master_keys (
 						id TEXT PRIMARY KEY,
@@ -444,7 +457,7 @@ export default class JoplinDatabase extends Database {
 						content TEXT NOT NULL
 					);
 				`;
-				queries.push(this.sqlStringToLines(newTableSql)[0]);
+				queries.push(sqlStringToLines(newTableSql)[0]);
 				const tableNames = ['notes', 'folders', 'tags', 'note_tags', 'resources'];
 				for (let i = 0; i < tableNames.length; i++) {
 					const n = tableNames[i];
@@ -478,23 +491,23 @@ export default class JoplinDatabase extends Database {
 					);
 				`;
 
-				queries.push(this.sqlStringToLines(itemChangesTable)[0]);
+				queries.push(sqlStringToLines(itemChangesTable)[0]);
 				queries.push('CREATE INDEX item_changes_item_id ON item_changes (item_id)');
 				queries.push('CREATE INDEX item_changes_created_time ON item_changes (created_time)');
 				queries.push('CREATE INDEX item_changes_item_type ON item_changes (item_type)');
 
-				queries.push(this.sqlStringToLines(noteResourcesTable)[0]);
+				queries.push(sqlStringToLines(noteResourcesTable)[0]);
 				queries.push('CREATE INDEX note_resources_note_id ON note_resources (note_id)');
 				queries.push('CREATE INDEX note_resources_resource_id ON note_resources (resource_id)');
 
 				queries.push({ sql: 'INSERT INTO item_changes (item_type, item_id, type, created_time) SELECT 1, id, 1, ? FROM notes', params: [Date.now()] });
 			};
 
-			if (targetVersion == 10) {
+			if (targetVersion === 10) {
 				upgradeVersion10();
 			}
 
-			if (targetVersion == 11) {
+			if (targetVersion === 11) {
 				// This trick was needed because Electron Builder incorrectly released a dev branch containing v10 as it was
 				// still being developed, and the db schema was not final at that time. So this v11 was created to
 				// make sure any invalid db schema that was accidentally created was deleted and recreated.
@@ -503,17 +516,17 @@ export default class JoplinDatabase extends Database {
 				upgradeVersion10();
 			}
 
-			if (targetVersion == 12) {
+			if (targetVersion === 12) {
 				queries.push('ALTER TABLE folders ADD COLUMN parent_id TEXT NOT NULL DEFAULT ""');
 			}
 
-			if (targetVersion == 13) {
+			if (targetVersion === 13) {
 				queries.push('ALTER TABLE resources ADD COLUMN fetch_status INT NOT NULL DEFAULT "2"');
 				queries.push('ALTER TABLE resources ADD COLUMN fetch_error TEXT NOT NULL DEFAULT ""');
 				queries.push({ sql: 'UPDATE resources SET fetch_status = ?', params: [Resource.FETCH_STATUS_DONE] });
 			}
 
-			if (targetVersion == 14) {
+			if (targetVersion === 14) {
 				const resourceLocalStates = `
 					CREATE TABLE resource_local_states (
 						id INTEGER PRIMARY KEY,
@@ -523,7 +536,7 @@ export default class JoplinDatabase extends Database {
 					);
 				`;
 
-				queries.push(this.sqlStringToLines(resourceLocalStates)[0]);
+				queries.push(sqlStringToLines(resourceLocalStates)[0]);
 
 				queries.push('INSERT INTO resource_local_states SELECT null, id, fetch_status, fetch_error FROM resources');
 
@@ -544,11 +557,11 @@ export default class JoplinDatabase extends Database {
 						encryption_cipher_text: 'TEXT NOT NULL DEFAULT ""',
 						encryption_applied: 'INT NOT NULL DEFAULT 0',
 						encryption_blob_encrypted: 'INT NOT NULL DEFAULT 0',
-					})
+					}),
 				);
 			}
 
-			if (targetVersion == 15) {
+			if (targetVersion === 15) {
 				queries.push('CREATE VIRTUAL TABLE notes_fts USING fts4(content="notes", notindexed="id", id, title, body)');
 				queries.push('INSERT INTO notes_fts(docid, id, title, body) SELECT rowid, id, title, body FROM notes WHERE is_conflict = 0 AND encryption_applied = 0');
 
@@ -572,7 +585,7 @@ export default class JoplinDatabase extends Database {
 					END;`);
 			}
 
-			if (targetVersion == 18) {
+			if (targetVersion === 18) {
 				const notesNormalized = `
 					CREATE TABLE notes_normalized (
 						id TEXT NOT NULL,
@@ -581,7 +594,7 @@ export default class JoplinDatabase extends Database {
 					);
 				`;
 
-				queries.push(this.sqlStringToLines(notesNormalized)[0]);
+				queries.push(sqlStringToLines(notesNormalized)[0]);
 
 				queries.push('CREATE INDEX notes_normalized_id ON notes_normalized (id)');
 
@@ -613,7 +626,7 @@ export default class JoplinDatabase extends Database {
 					END;`);
 			}
 
-			if (targetVersion == 19) {
+			if (targetVersion === 19) {
 				const newTableSql = `
 					CREATE TABLE revisions (
 						id TEXT PRIMARY KEY,
@@ -630,7 +643,7 @@ export default class JoplinDatabase extends Database {
 						created_time INT NOT NULL
 					);
 				`;
-				queries.push(this.sqlStringToLines(newTableSql)[0]);
+				queries.push(sqlStringToLines(newTableSql)[0]);
 
 				queries.push('CREATE INDEX revisions_parent_id ON revisions (parent_id)');
 				queries.push('CREATE INDEX revisions_item_type ON revisions (item_type)');
@@ -642,7 +655,7 @@ export default class JoplinDatabase extends Database {
 				queries.push('ALTER TABLE item_changes ADD COLUMN before_change_item TEXT NOT NULL DEFAULT ""');
 			}
 
-			if (targetVersion == 20) {
+			if (targetVersion === 20) {
 				const newTableSql = `
 					CREATE TABLE migrations (
 						id INTEGER PRIMARY KEY,
@@ -651,17 +664,17 @@ export default class JoplinDatabase extends Database {
 						created_time INT NOT NULL
 					);
 				`;
-				queries.push(this.sqlStringToLines(newTableSql)[0]);
+				queries.push(sqlStringToLines(newTableSql)[0]);
 
 				queries.push('ALTER TABLE resources ADD COLUMN `size` INT NOT NULL DEFAULT -1');
-				queries.push(this.addMigrationFile(20));
+				queries.push(addMigrationFile(20));
 			}
 
-			if (targetVersion == 21) {
+			if (targetVersion === 21) {
 				queries.push('ALTER TABLE sync_items ADD COLUMN item_location INT NOT NULL DEFAULT 1');
 			}
 
-			if (targetVersion == 22) {
+			if (targetVersion === 22) {
 				const newTableSql = `
 					CREATE TABLE resources_to_download (
 						id INTEGER PRIMARY KEY,
@@ -670,13 +683,13 @@ export default class JoplinDatabase extends Database {
 						created_time INT NOT NULL
 					);
 				`;
-				queries.push(this.sqlStringToLines(newTableSql)[0]);
+				queries.push(sqlStringToLines(newTableSql)[0]);
 
 				queries.push('CREATE INDEX resources_to_download_resource_id ON resources_to_download (resource_id)');
 				queries.push('CREATE INDEX resources_to_download_updated_time ON resources_to_download (updated_time)');
 			}
 
-			if (targetVersion == 23) {
+			if (targetVersion === 23) {
 				const newTableSql = `
 					CREATE TABLE key_values (
 						id INTEGER PRIMARY KEY,
@@ -686,16 +699,16 @@ export default class JoplinDatabase extends Database {
 						updated_time INT NOT NULL
 					);
 				`;
-				queries.push(this.sqlStringToLines(newTableSql)[0]);
+				queries.push(sqlStringToLines(newTableSql)[0]);
 
 				queries.push('CREATE UNIQUE INDEX key_values_key ON key_values (key)');
 			}
 
-			if (targetVersion == 24) {
+			if (targetVersion === 24) {
 				queries.push('ALTER TABLE notes ADD COLUMN `markup_language` INT NOT NULL DEFAULT 1'); // 1: Markdown, 2: HTML
 			}
 
-			if (targetVersion == 25) {
+			if (targetVersion === 25) {
 				queries.push(`CREATE VIEW tags_with_note_count AS 
 						SELECT tags.id as id, tags.title as title, tags.created_time as created_time, tags.updated_time as updated_time, COUNT(notes.id) as note_count 
 						FROM tags 
@@ -705,7 +718,7 @@ export default class JoplinDatabase extends Database {
 						GROUP BY tags.id`);
 			}
 
-			if (targetVersion == 26) {
+			if (targetVersion === 26) {
 				const tableNames = ['notes', 'folders', 'tags', 'note_tags', 'resources'];
 				for (let i = 0; i < tableNames.length; i++) {
 					const n = tableNames[i];
@@ -713,19 +726,19 @@ export default class JoplinDatabase extends Database {
 				}
 			}
 
-			if (targetVersion == 27) {
-				queries.push(this.addMigrationFile(27));
+			if (targetVersion === 27) {
+				queries.push(addMigrationFile(27));
 			}
 
-			if (targetVersion == 28) {
+			if (targetVersion === 28) {
 				queries.push('CREATE INDEX resources_size ON resources(size)');
 			}
 
-			if (targetVersion == 29) {
+			if (targetVersion === 29) {
 				queries.push('ALTER TABLE version ADD COLUMN table_fields_version INT NOT NULL DEFAULT 0');
 			}
 
-			if (targetVersion == 30) {
+			if (targetVersion === 30) {
 				// Change the type of the "order" field from INT to NUMERIC
 				// Making it a float provides a much bigger range when inserting notes.
 				// For example, with an INT, inserting a note C between note A with order 1000 and
@@ -758,21 +771,21 @@ export default class JoplinDatabase extends Database {
 						encryption_applied: 'INT NOT NULL DEFAULT 0',
 						markup_language: 'INT NOT NULL DEFAULT 1',
 						is_shared: 'INT NOT NULL DEFAULT 0',
-					})
+					}),
 				);
 			}
 
-			if (targetVersion == 31) {
+			if (targetVersion === 31) {
 				// This empty version is due to the revert of the hierarchical tag feature
 				// We need to keep the version for the users who have upgraded using
 				// the pre-release
 				queries.push('ALTER TABLE tags ADD COLUMN parent_id TEXT NOT NULL DEFAULT ""');
 				// Drop the tag note count view, instead compute note count on the fly
 				// queries.push('DROP VIEW tags_with_note_count');
-				// queries.push(this.addMigrationFile(31));
+				// queries.push(addMigrationFile(31));
 			}
 
-			if (targetVersion == 32) {
+			if (targetVersion === 32) {
 				// This is the same as version 25 - this is to complete the
 				// revert of the hierarchical tag feature.
 				queries.push(`CREATE VIEW IF NOT EXISTS tags_with_note_count AS 
@@ -784,7 +797,7 @@ export default class JoplinDatabase extends Database {
 						GROUP BY tags.id`);
 			}
 
-			if (targetVersion == 33) {
+			if (targetVersion === 33) {
 				queries.push('DROP TRIGGER notes_fts_before_update');
 				queries.push('DROP TRIGGER notes_fts_before_delete');
 				queries.push('DROP TRIGGER notes_after_update');
@@ -812,7 +825,7 @@ export default class JoplinDatabase extends Database {
 					);
 				`;
 
-				queries.push(this.sqlStringToLines(notesNormalized)[0]);
+				queries.push(sqlStringToLines(notesNormalized)[0]);
 
 				queries.push('CREATE INDEX notes_normalized_id ON notes_normalized (id)');
 
@@ -846,7 +859,7 @@ export default class JoplinDatabase extends Database {
 					);`
 				;
 
-				queries.push(this.sqlStringToLines(newVirtualTableSql)[0]);
+				queries.push(sqlStringToLines(newVirtualTableSql)[0]);
 
 				queries.push(`
 					CREATE TRIGGER notes_fts_before_update BEFORE UPDATE ON notes_normalized BEGIN
@@ -864,27 +877,27 @@ export default class JoplinDatabase extends Database {
 					CREATE TRIGGER notes_after_insert AFTER INSERT ON notes_normalized BEGIN
 						INSERT INTO notes_fts(docid, ${tableFields}) SELECT rowid, ${tableFields} FROM notes_normalized WHERE new.rowid = notes_normalized.rowid;
 					END;`);
-				queries.push(this.addMigrationFile(33));
+				queries.push(addMigrationFile(33));
 			}
 
-			if (targetVersion == 34) {
+			if (targetVersion === 34) {
 				queries.push('CREATE VIRTUAL TABLE search_aux USING fts4aux(notes_fts)');
 				queries.push('CREATE VIRTUAL TABLE notes_spellfix USING spellfix1');
 			}
 
-			if (targetVersion == 35) {
+			if (targetVersion === 35) {
 				queries.push('ALTER TABLE notes_normalized ADD COLUMN todo_due INT NOT NULL DEFAULT 0');
 				queries.push('CREATE INDEX notes_normalized_todo_due ON notes_normalized (todo_due)');
-				queries.push(this.addMigrationFile(35));
+				queries.push(addMigrationFile(35));
 			}
 
-			if (targetVersion == 36) {
+			if (targetVersion === 36) {
 				queries.push('ALTER TABLE folders ADD COLUMN share_id TEXT NOT NULL DEFAULT ""');
 				queries.push('ALTER TABLE notes ADD COLUMN share_id TEXT NOT NULL DEFAULT ""');
 				queries.push('ALTER TABLE resources ADD COLUMN share_id TEXT NOT NULL DEFAULT ""');
 			}
 
-			if (targetVersion == 38) {
+			if (targetVersion === 38) {
 				queries.push('DROP VIEW tags_with_note_count');
 				queries.push(`CREATE VIEW tags_with_note_count AS 
 						SELECT tags.id as id, tags.title as title, tags.created_time as created_time, tags.updated_time as updated_time, COUNT(notes.id) as note_count, 
@@ -896,18 +909,25 @@ export default class JoplinDatabase extends Database {
 						GROUP BY tags.id`);
 			}
 
-			if (targetVersion == 39) {
+			if (targetVersion === 39) {
 				queries.push('ALTER TABLE `notes` ADD COLUMN conflict_original_id TEXT NOT NULL DEFAULT ""');
 			}
 
-			if (targetVersion == 40) {
+			if (targetVersion === 40) {
 				queries.push('ALTER TABLE `folders` ADD COLUMN master_key_id TEXT NOT NULL DEFAULT ""');
 				queries.push('ALTER TABLE `notes` ADD COLUMN master_key_id TEXT NOT NULL DEFAULT ""');
 				queries.push('ALTER TABLE `resources` ADD COLUMN master_key_id TEXT NOT NULL DEFAULT ""');
 			}
 
-			if (targetVersion == 41) {
+			if (targetVersion === 41) {
 				queries.push('ALTER TABLE `folders` ADD COLUMN icon TEXT NOT NULL DEFAULT ""');
+			}
+
+			if (targetVersion > 41) {
+				const migration = migrations[targetVersion - 42];
+				if (!migration) throw new Error(`No such migration: ${targetVersion}`);
+				const migrationQueries = migration();
+				queries = queries.concat(migrationQueries);
 			}
 
 			const updateVersionQuery = { sql: 'UPDATE version SET version = ?', params: [targetVersion] };

@@ -1,9 +1,11 @@
 import paginationToSql from './models/utils/paginationToSql';
-
 import Database from './database';
-import uuid from './uuid';
 import time from './time';
 import JoplinDatabase, { TableField } from './JoplinDatabase';
+import { LoadOptions, SaveOptions } from './models/utils/types';
+import ActionLogger, { ItemActionType as ItemActionType } from './utils/ActionLogger';
+import { BaseItemEntity, SqlQuery } from './services/database/types';
+import uuid from './uuid';
 const Mutex = require('async-mutex').Mutex;
 
 // New code should make use of this enum
@@ -37,6 +39,20 @@ export interface DeleteOptions {
 	// sync, we don't need to track the deletion, because the operation doesn't
 	// need to applied again on next sync.
 	trackDeleted?: boolean;
+
+	disableReadOnlyCheck?: boolean;
+
+	// Used for logging
+	sourceDescription?: string|ActionLogger;
+
+	// Tells whether the deleted item should be moved to the trash. By default
+	// it is permanently deleted.
+	toTrash?: boolean;
+
+	// If the item is to be moved to the trash, tell what should be the new
+	// parent. By default the item will be moved at the root of the trash. Note
+	// that caller must ensure that this parent ID is a deleted folder.
+	toTrashParentId?: string;
 }
 
 class BaseModel {
@@ -44,6 +60,7 @@ class BaseModel {
 	// TODO: This ancient part of Joplin about model types is a bit of a
 	// mess and should be refactored properly.
 
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	public static typeEnum_: any[] = [
 		['TYPE_NOTE', ModelType.Note],
 		['TYPE_FOLDER', ModelType.Folder],
@@ -63,6 +80,8 @@ class BaseModel {
 		['TYPE_COMMAND', ModelType.Command],
 	];
 
+	private static uuidGenerator: ()=> string = uuid.create;
+
 	public static TYPE_NOTE = ModelType.Note;
 	public static TYPE_FOLDER = ModelType.Folder;
 	public static TYPE_SETTING = ModelType.Setting;
@@ -80,24 +99,28 @@ class BaseModel {
 	public static TYPE_SMART_FILTER = ModelType.SmartFilter;
 	public static TYPE_COMMAND = ModelType.Command;
 
+	// eslint-disable-next-line @typescript-eslint/ban-types -- Old code before rule was applied
 	public static dispatch: Function = function() {};
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	private static saveMutexes_: any = {};
 
 	private static db_: JoplinDatabase;
 
-	static modelType(): ModelType {
+	public static modelType(): ModelType {
 		throw new Error('Must be overriden');
 	}
 
-	static tableName(): string {
+	public static tableName(): string {
 		throw new Error('Must be overriden');
 	}
 
-	static setDb(db: any) {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+	public static setDb(db: any) {
 		this.db_ = db;
 	}
 
-	static addModelMd(model: any): any {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+	public static addModelMd(model: any): any {
 		if (!model) return model;
 
 		if (Array.isArray(model)) {
@@ -107,28 +130,30 @@ class BaseModel {
 			}
 			return output;
 		} else {
-			model = Object.assign({}, model);
+			model = { ...model };
 			model.type_ = this.modelType();
 			return model;
 		}
 	}
 
-	static logger() {
+	public static logger() {
 		return this.db().logger();
 	}
 
-	static useUuid() {
+	public static useUuid() {
 		return false;
 	}
 
-	static byId(items: any[], id: string) {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+	public static byId(items: any[], id: string) {
 		for (let i = 0; i < items.length; i++) {
-			if (items[i].id == id) return items[i];
+			if (items[i].id === id) return items[i];
 		}
 		return null;
 	}
 
-	static defaultValues(fieldNames: string[]) {
+	public static defaultValues(fieldNames: string[]) {
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 		const output: any = {};
 		for (const n of fieldNames) {
 			output[n] = this.db().fieldDefaultValue(this.tableName(), n);
@@ -136,33 +161,38 @@ class BaseModel {
 		return output;
 	}
 
-	static modelIndexById(items: any[], id: string) {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+	public static modelIndexById(items: any[], id: string) {
 		for (let i = 0; i < items.length; i++) {
-			if (items[i].id == id) return i;
+			if (items[i].id === id) return i;
 		}
 		return -1;
 	}
 
-	static modelsByIds(items: any[], ids: string[]) {
+	public static modelsByIds<T extends BaseItemEntity>(items: T[], ids: string[]): T[] {
 		const output = [];
-		for (let i = 0; i < items.length; i++) {
-			if (ids.indexOf(items[i].id) >= 0) {
-				output.push(items[i]);
+
+		// Prefer a `Set` to using `ids.includes` -- this gives a better running time.
+		const idSet = new Set(ids);
+		for (const item of items) {
+			if (idSet.has(item.id)) {
+				output.push(item);
 			}
 		}
+
 		return output;
 	}
 
 	// Prefer the use of this function to compare IDs as it handles the case where
 	// one ID is null and the other is "", in which case they are actually considered to be the same.
-	static idsEqual(id1: string, id2: string) {
+	public static idsEqual(id1: string, id2: string) {
 		if (!id1 && !id2) return true;
 		if (!id1 && !!id2) return false;
 		if (!!id1 && !id2) return false;
 		return id1 === id2;
 	}
 
-	static modelTypeToName(type: number) {
+	public static modelTypeToName(type: number) {
 		for (let i = 0; i < BaseModel.typeEnum_.length; i++) {
 			const e = BaseModel.typeEnum_[i];
 			if (e[1] === type) return e[0].substr(5).toLowerCase();
@@ -170,7 +200,7 @@ class BaseModel {
 		throw new Error(`Unknown model type: ${type}`);
 	}
 
-	static modelNameToType(name: string) {
+	public static modelNameToType(name: string) {
 		for (let i = 0; i < BaseModel.typeEnum_.length; i++) {
 			const e = BaseModel.typeEnum_[i];
 			const eName = e[0].substr(5).toLowerCase();
@@ -179,12 +209,12 @@ class BaseModel {
 		throw new Error(`Unknown model name: ${name}`);
 	}
 
-	static hasField(name: string) {
+	public static hasField(name: string) {
 		const fields = this.fieldNames();
 		return fields.indexOf(name) >= 0;
 	}
 
-	static fieldNames(withPrefix: boolean = false) {
+	public static fieldNames(withPrefix = false) {
 		const output = this.db().tableFieldNames(this.tableName());
 		if (!withPrefix) return output;
 
@@ -197,20 +227,23 @@ class BaseModel {
 		return temp;
 	}
 
-	static fieldType(name: string, defaultValue: any = null) {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+	public static fieldType(name: string, defaultValue: any = null) {
 		const fields = this.fields();
 		for (let i = 0; i < fields.length; i++) {
-			if (fields[i].name == name) return fields[i].type;
+			if (fields[i].name === name) return fields[i].type;
 		}
 		if (defaultValue !== null) return defaultValue;
 		throw new Error(`Unknown field: ${name}`);
 	}
 
-	static fields(): TableField[] {
+	public static fields(): TableField[] {
 		return this.db().tableFields(this.tableName());
 	}
 
-	static removeUnknownFields(model: any) {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+	public static removeUnknownFields(model: any) {
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 		const newModel: any = {};
 		for (const n in model) {
 			if (!model.hasOwnProperty(n)) continue;
@@ -220,8 +253,9 @@ class BaseModel {
 		return newModel;
 	}
 
-	static new() {
+	public static new() {
 		const fields = this.fields();
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 		const output: any = {};
 		for (let i = 0; i < fields.length; i++) {
 			const f = fields[i];
@@ -230,11 +264,12 @@ class BaseModel {
 		return output;
 	}
 
-	static modOptions(options: any) {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+	public static modOptions(options: any) {
 		if (!options) {
 			options = {};
 		} else {
-			options = Object.assign({}, options);
+			options = { ...options };
 		}
 		if (!('isNew' in options)) options.isNew = 'auto';
 		if (!('autoTimestamp' in options)) options.autoTimestamp = true;
@@ -242,34 +277,43 @@ class BaseModel {
 		return options;
 	}
 
-	static count(options: any = null) {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+	public static count(options: any = null) {
 		if (!options) options = {};
 		let sql = `SELECT count(*) as total FROM \`${this.tableName()}\``;
 		if (options.where) sql += ` WHERE ${options.where}`;
 		return this.db()
 			.selectOne(sql)
+		// eslint-disable-next-line promise/prefer-await-to-then, @typescript-eslint/no-explicit-any -- Old code before rule was applied, Old code before rule was applied
 			.then((r: any) => {
 				return r ? r['total'] : 0;
 			});
 	}
 
-	static load(id: string, options: any = null) {
+	public static load(id: string, options: LoadOptions = null) {
 		return this.loadByField('id', id, options);
 	}
 
-	static shortId(id: string) {
+	public static shortId(id: string) {
 		return id.substr(0, 5);
 	}
 
-	static loadByPartialId(partialId: string) {
+	public static loadByPartialId(partialId: string) {
 		return this.modelSelectAll(`SELECT * FROM \`${this.tableName()}\` WHERE \`id\` LIKE ?`, [`${partialId}%`]);
 	}
 
-	static applySqlOptions(options: any, sql: string, params: any[] = null) {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+	public static applySqlOptions(options: LoadOptions, sql: string, params: any[] = null) {
 		if (!options) options = {};
 
 		if (options.order && options.order.length) {
-			sql += ` ORDER BY ${paginationToSql(options)}`;
+			sql += ` ORDER BY ${paginationToSql({
+				limit: options.limit,
+				// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+				order: options.order as any,
+				page: 1,
+				caseInsensitive: options.caseInsensitive,
+			})}`;
 		}
 
 		if (options.limit) sql += ` LIMIT ${options.limit}`;
@@ -277,17 +321,20 @@ class BaseModel {
 		return { sql: sql, params: params };
 	}
 
-	static async allIds(options: any = null) {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+	public static async allIds(options: any = null) {
 		const q = this.applySqlOptions(options, `SELECT id FROM \`${this.tableName()}\``);
 		const rows = await this.db().selectAll(q.sql, q.params);
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 		return rows.map((r: any) => r.id);
 	}
 
-	static async all(options: any = null) {
+	public static async all(options: LoadOptions = null) {
 		if (!options) options = {};
 		if (!options.fields) options.fields = '*';
 
 		let sql = `SELECT ${this.db().escapeFields(options.fields)} FROM \`${this.tableName()}\``;
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 		let params: any[] = [];
 		if (options.where) {
 			sql += ` WHERE ${options.where}`;
@@ -298,18 +345,23 @@ class BaseModel {
 		return this.modelSelectAll(q.sql, q.params);
 	}
 
-	static async byIds(ids: string[], options: any = null) {
+	public static escapeIdsForSql(ids: string[]) {
+		return this.db().escapeValues(ids).join(', ');
+	}
+
+	public static async byIds(ids: string[], options: LoadOptions = null) {
 		if (!ids.length) return [];
 		if (!options) options = {};
 		if (!options.fields) options.fields = '*';
 
 		let sql = `SELECT ${this.db().escapeFields(options.fields)} FROM \`${this.tableName()}\``;
-		sql += ` WHERE id IN ("${ids.join('","')}")`;
+		sql += ` WHERE id IN (${this.escapeIdsForSql(ids)})`;
 		const q = this.applySqlOptions(options, sql);
 		return this.modelSelectAll(q.sql);
 	}
 
-	static async search(options: any = null) {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+	public static async search(options: any = null) {
 		if (!options) options = {};
 		if (!options.fields) options.fields = '*';
 
@@ -331,25 +383,55 @@ class BaseModel {
 		return this.modelSelectAll(query.sql, query.params);
 	}
 
-	static modelSelectOne(sql: string, params: any[] = null) {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+	public static async modelSelectOne(sqlOrSqlQuery: string | SqlQuery, params: any[] = null) {
 		if (params === null) params = [];
-		return this.db()
-			.selectOne(sql, params)
-			.then((model: any) => {
-				return this.filter(this.addModelMd(model));
-			});
+		let sql = '';
+
+		if (typeof sqlOrSqlQuery !== 'string') {
+			sql = sqlOrSqlQuery.sql;
+			params = sqlOrSqlQuery.params ? sqlOrSqlQuery.params : [];
+		} else {
+			sql = sqlOrSqlQuery;
+		}
+
+		try {
+			const model = await this.db().selectOne(sql, params);
+			return this.filter(this.addModelMd(model));
+		} catch (error) {
+			error.message = `On query ${JSON.stringify({ sql, params })}: ${error.message}`;
+			throw error;
+		}
 	}
 
-	static modelSelectAll(sql: string, params: any[] = null) {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+	public static async modelSelectAll<T = any>(sqlOrSqlQuery: string | SqlQuery, params: any[] = null): Promise<T[]> {
 		if (params === null) params = [];
-		return this.db()
-			.selectAll(sql, params)
-			.then((models: any[]) => {
-				return this.filterArray(this.addModelMd(models));
-			});
+		let sql = '';
+
+		if (typeof sqlOrSqlQuery !== 'string') {
+			sql = sqlOrSqlQuery.sql;
+			params = sqlOrSqlQuery.params ? sqlOrSqlQuery.params : [];
+		} else {
+			sql = sqlOrSqlQuery;
+		}
+
+		try {
+			const models = await this.db().selectAll(sql, params);
+			return this.filterArray(this.addModelMd(models)) as T[];
+		} catch (error) {
+			error.message = `On query ${JSON.stringify({ sql, params })}: ${error.message}`;
+			throw error;
+		}
 	}
 
-	static loadByField(fieldName: string, fieldValue: any, options: any = null) {
+	protected static selectFields(options: LoadOptions): string {
+		if (!options || !options.fields) return '*';
+		return this.db().escapeFieldsToString(options.fields);
+	}
+
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+	public static loadByField(fieldName: string, fieldValue: any, options: LoadOptions = null) {
 		if (!options) options = {};
 		if (!('caseInsensitive' in options)) options.caseInsensitive = false;
 		if (!options.fields) options.fields = '*';
@@ -358,7 +440,8 @@ class BaseModel {
 		return this.modelSelectOne(sql, [fieldValue]);
 	}
 
-	static loadByFields(fields: any, options: any = null) {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+	public static loadByFields(fields: any, options: LoadOptions = null) {
 		if (!options) options = {};
 		if (!('caseInsensitive' in options)) options.caseInsensitive = false;
 		if (!options.fields) options.fields = '*';
@@ -373,11 +456,14 @@ class BaseModel {
 		return this.modelSelectOne(sql, params);
 	}
 
-	static loadByTitle(fieldValue: any) {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+	public static loadByTitle(fieldValue: any) {
 		return this.modelSelectOne(`SELECT * FROM \`${this.tableName()}\` WHERE \`title\` = ?`, [fieldValue]);
 	}
 
-	static diffObjects(oldModel: any, newModel: any) {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+	public static diffObjects(oldModel: any, newModel: any) {
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 		const output: any = {};
 		const fields = this.diffObjectsFields(oldModel, newModel);
 		for (let i = 0; i < fields.length; i++) {
@@ -387,11 +473,12 @@ class BaseModel {
 		return output;
 	}
 
-	static diffObjectsFields(oldModel: any, newModel: any) {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+	public static diffObjectsFields(oldModel: any, newModel: any) {
 		const output = [];
 		for (const n in newModel) {
 			if (!newModel.hasOwnProperty(n)) continue;
-			if (n == 'type_') continue;
+			if (n === 'type_') continue;
 			if (!(n in oldModel) || newModel[n] !== oldModel[n]) {
 				output.push(n);
 			}
@@ -399,14 +486,17 @@ class BaseModel {
 		return output;
 	}
 
-	static modelsAreSame(oldModel: any, newModel: any) {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+	public static modelsAreSame(oldModel: any, newModel: any) {
 		const diff = this.diffObjects(oldModel, newModel);
 		delete diff.type_;
 		return !Object.getOwnPropertyNames(diff).length;
 	}
 
-	static saveMutex(modelOrId: any) {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+	public static saveMutex(modelOrId: any) {
 		const noLockMutex = {
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 			acquire: function(): any {
 				return null;
 			},
@@ -426,7 +516,8 @@ class BaseModel {
 		return mutex;
 	}
 
-	static releaseSaveMutex(modelOrId: any, release: Function) {
+	// eslint-disable-next-line @typescript-eslint/ban-types, @typescript-eslint/no-explicit-any -- Old code before rule was applied, Old code before rule was applied
+	public static releaseSaveMutex(modelOrId: any, release: Function) {
 		if (!release) return;
 		if (!modelOrId) return release();
 
@@ -441,7 +532,9 @@ class BaseModel {
 		release();
 	}
 
-	static saveQuery(o: any, options: any) {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+	public static saveQuery(o: any, options: any) {
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 		let temp: any = {};
 		const fieldNames = this.fieldNames();
 		for (let i = 0; i < fieldNames.length; i++) {
@@ -454,6 +547,7 @@ class BaseModel {
 		// be part of the final list of fields if autoTimestamp is on.
 		// id also will stay.
 		if (!options.isNew && options.fields) {
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 			const filtered: any = {};
 			for (const k in temp) {
 				if (!temp.hasOwnProperty(k)) continue;
@@ -466,6 +560,7 @@ class BaseModel {
 		o = temp;
 
 		let modelId = temp.id;
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 		let query: any = {};
 
 		const timeNow = time.unixMs();
@@ -487,7 +582,7 @@ class BaseModel {
 
 		if (options.isNew) {
 			if (this.useUuid() && !o.id) {
-				modelId = uuid.create();
+				modelId = this.generateUuid();
 				o.id = modelId;
 			}
 
@@ -506,7 +601,7 @@ class BaseModel {
 			query = Database.insertQuery(this.tableName(), o);
 		} else {
 			const where = { id: o.id };
-			const temp = Object.assign({}, o);
+			const temp = { ...o };
 			delete temp.id;
 
 			query = Database.updateQuery(this.tableName(), temp, where);
@@ -518,7 +613,8 @@ class BaseModel {
 		return query;
 	}
 
-	static userSideValidation(o: any) {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+	public static userSideValidation(o: any) {
 		if (o.id && !o.id.match(/^[a-f0-9]{32}$/)) {
 			throw new Error('Validation error: ID must a 32-characters lowercase hexadecimal string');
 		}
@@ -529,7 +625,8 @@ class BaseModel {
 		}
 	}
 
-	static async save(o: any, options: any = null) {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+	public static async save(o: any, options: SaveOptions = null) {
 		// When saving, there's a mutex per model ID. This is because the model returned from this function
 		// is basically its input `o` (instead of being read from the database, for performance reasons).
 		// This works well in general except if that model is saved simultaneously in two places. In that
@@ -540,7 +637,8 @@ class BaseModel {
 		const mutexRelease = await this.saveMutex(o).acquire();
 
 		options = this.modOptions(options);
-		options.isNew = this.isNew(o, options);
+		const isNew = this.isNew(o, options);
+		options.isNew = isNew;
 
 		// Diff saving is an optimisation which takes a new version of the item and an old one,
 		// do a diff and save only this diff. IMPORTANT: When using this make sure that both
@@ -575,7 +673,7 @@ class BaseModel {
 		try {
 			await this.db().transactionExecBatch(queries);
 
-			o = Object.assign({}, o);
+			o = { ...o };
 			if (modelId) o.id = modelId;
 			if ('updated_time' in saveQuery.modObject) o.updated_time = saveQuery.modObject.updated_time;
 			if ('created_time' in saveQuery.modObject) o.created_time = saveQuery.modObject.created_time;
@@ -599,7 +697,8 @@ class BaseModel {
 		return output;
 	}
 
-	static isNew(object: any, options: any) {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+	public static isNew(object: any, options: any) {
 		if (options && 'isNew' in options) {
 			// options.isNew can be "auto" too
 			if (options.isNew === true) return true;
@@ -609,7 +708,8 @@ class BaseModel {
 		return !object.id;
 	}
 
-	static filterArray(models: any[]) {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+	public static filterArray(models: any[]) {
 		const output = [];
 		for (let i = 0; i < models.length; i++) {
 			output.push(this.filter(models[i]));
@@ -617,10 +717,11 @@ class BaseModel {
 		return output;
 	}
 
-	static filter(model: any) {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+	public static filter(model: any) {
 		if (!model) return model;
 
-		const output = Object.assign({}, model);
+		const output = { ...model };
 		for (const n in output) {
 			if (!output.hasOwnProperty(n)) continue;
 
@@ -640,24 +741,37 @@ class BaseModel {
 		return output;
 	}
 
-	static delete(id: string) {
+	public static delete(id: string, options?: DeleteOptions) {
 		if (!id) throw new Error('Cannot delete object without an ID');
+		ActionLogger.from(options?.sourceDescription).log(ItemActionType.Delete, id);
+
 		return this.db().exec(`DELETE FROM ${this.tableName()} WHERE id = ?`, [id]);
 	}
 
-	static async batchDelete(ids: string[], options: DeleteOptions = null) {
+	public static async batchDelete(ids: string[], options?: DeleteOptions) {
 		if (!ids.length) return;
+		ActionLogger.from(options?.sourceDescription).log(ItemActionType.Delete, ids);
+
 		options = this.modOptions(options);
 		const idFieldName = options.idFieldName ? options.idFieldName : 'id';
-		const sql = `DELETE FROM ${this.tableName()} WHERE ${idFieldName} IN ("${ids.join('","')}")`;
+		const sql = `DELETE FROM ${this.tableName()} WHERE ${idFieldName} IN (${this.escapeIdsForSql(ids)})`;
 		await this.db().exec(sql);
 	}
 
-	static db() {
+	public static db() {
 		if (!this.db_) throw new Error('Accessing database before it has been initialised');
 		return this.db_;
 	}
 
+	public static generateUuid() {
+		return this.uuidGenerator();
+	}
+
+	public static setIdGenerator(generator: ()=> string) {
+		const previous = this.uuidGenerator;
+		this.uuidGenerator = generator;
+		return previous;
+	}
 	// static isReady() {
 	// 	return !!this.db_;
 	// }
@@ -665,6 +779,7 @@ class BaseModel {
 
 for (let i = 0; i < BaseModel.typeEnum_.length; i++) {
 	const e = BaseModel.typeEnum_[i];
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	(BaseModel as any)[e[0]] = e[1];
 }
 

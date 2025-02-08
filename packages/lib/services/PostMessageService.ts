@@ -22,7 +22,7 @@
 // another location, when the response is received, it resolves that promise.
 // See UserWebviewIndex.js to see how it's done.
 
-import Logger from '../Logger';
+import Logger from '@joplin/utils/Logger';
 import PluginService from './plugins/PluginService';
 
 const logger = Logger.create('PostMessageService');
@@ -40,21 +40,26 @@ export enum ResponderComponentType {
 
 export interface MessageResponse {
 	responseId: string;
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	response: any;
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	error: any;
 }
 
 type MessageResponder = (message: MessageResponse)=> void;
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 type ViewMessageHandler = (message: any)=> void;
 
 interface Message {
 	pluginId: string;
+	windowId: string;
 	contentScriptId: string;
 	viewId: string;
 	from: MessageParticipant;
 	to: MessageParticipant;
 	id: string;
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	content: any;
 }
 
@@ -110,33 +115,39 @@ export default class PostMessageService {
 		}
 	}
 
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	private sendResponse(message: Message, responseContent: any, error: any) {
 
 		let responder: MessageResponder = null;
 
 		if (message.from === MessageParticipant.ContentScript) {
-			responder = this.responder(ResponderComponentType.NoteTextViewer, message.viewId);
+			responder = this.responder(ResponderComponentType.NoteTextViewer, message.viewId, message.windowId);
 		} else if (message.from === MessageParticipant.UserWebview) {
-			responder = this.responder(ResponderComponentType.UserWebview, message.viewId);
+			responder = this.responder(ResponderComponentType.UserWebview, message.viewId, message.windowId);
 		}
 
 		if (!responder) {
-			logger.warn('Cannot respond to message because no responder was found', message);
+			logger.info('Cannot respond to message because no responder was found', message);
+			logger.info('Error was:', error);
+		} else {
+			responder({
+				responseId: message.id,
+				response: responseContent,
+				error,
+			});
 		}
-
-		responder({
-			responseId: message.id,
-			response: responseContent,
-			error,
-		});
 	}
 
-	private responder(type: ResponderComponentType, viewId: string): any {
-		return this.responders_[[type, viewId].join(':')];
+	private responder(type: ResponderComponentType, viewId: string, windowId: string) {
+		return this.responders_[[type, viewId, windowId].join(':')];
 	}
 
-	public registerResponder(type: ResponderComponentType, viewId: string, responder: MessageResponder) {
-		this.responders_[[type, viewId].join(':')] = responder;
+	public registerResponder(type: ResponderComponentType, viewId: string, windowId: string, responder: MessageResponder) {
+		this.responders_[[type, viewId, windowId].join(':')] = responder;
+	}
+
+	public unregisterResponder(type: ResponderComponentType, viewId: string, windowId: string) {
+		delete this.responders_[[type, viewId, windowId].join(':')];
 	}
 
 	public registerViewMessageHandler(type: ResponderComponentType, viewId: string, callback: ViewMessageHandler) {
@@ -145,10 +156,6 @@ export default class PostMessageService {
 
 	public unregisterViewMessageHandler(type: ResponderComponentType, viewId: string) {
 		delete this.viewMessageHandlers_[[type, viewId].join(':')];
-	}
-
-	public unregisterResponder(type: ResponderComponentType, viewId: string) {
-		delete this.responders_[[type, viewId].join(':')];
 	}
 
 }

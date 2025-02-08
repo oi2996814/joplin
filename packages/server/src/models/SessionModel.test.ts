@@ -1,7 +1,7 @@
 import { createUserAndSession, beforeAllDb, afterAllTests, beforeEachDb, models } from '../utils/testing/testUtils';
 import { defaultSessionTtl } from './SessionModel';
 
-describe('SessionModel', function() {
+describe('SessionModel', () => {
 
 	beforeAll(async () => {
 		await beforeAllDb('SessionModel');
@@ -15,8 +15,8 @@ describe('SessionModel', function() {
 		await beforeEachDb();
 	});
 
-	test('should delete expired sessions', async function() {
-		jest.useFakeTimers('modern');
+	test('should delete expired sessions', async () => {
+		jest.useFakeTimers();
 
 		const t0 = new Date('2020-01-01T00:00:00').getTime();
 		jest.setSystemTime(t0);

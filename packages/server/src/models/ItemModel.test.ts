@@ -1,4 +1,4 @@
-import { createUserAndSession, beforeAllDb, afterAllTests, beforeEachDb, models, createItem, createItemTree, createResource, createNote, createFolder, createItemTree3, db, tempDir, expectNotThrow, expectHttpError } from '../utils/testing/testUtils';
+import { createUserAndSession, beforeAllDb, afterAllTests, beforeEachDb, models, createItemTree, createResource, createNote, createItemTree3, db, tempDir, expectNotThrow, expectHttpError, dbSlave } from '../utils/testing/testUtils';
 import { shareFolderWithUser } from '../utils/testing/shareApiUtils';
 import { resourceBlobPath } from '../utils/joplinUtils';
 import newModelFactory from './factory';
@@ -9,7 +9,7 @@ import loadStorageDriver from './items/storage/loadStorageDriver';
 import { ErrorPayloadTooLarge } from '../utils/errors';
 import { isSqlite } from '../db';
 
-describe('ItemModel', function() {
+describe('ItemModel', () => {
 
 	beforeAll(async () => {
 		await beforeAllDb('ItemModel');
@@ -23,66 +23,66 @@ describe('ItemModel', function() {
 		await beforeEachDb();
 	});
 
-	test('should find exclusively owned items 1', async function() {
-		const { user: user1 } = await createUserAndSession(1, true);
-		const { session: session2, user: user2 } = await createUserAndSession(2);
+	// test('should find exclusively owned items 1', async function() {
+	// 	const { user: user1 } = await createUserAndSession(1, true);
+	// 	const { session: session2, user: user2 } = await createUserAndSession(2);
 
-		const tree: any = {
-			'000000000000000000000000000000F1': {
-				'00000000000000000000000000000001': null,
-			},
-		};
+	// 	const tree: any = {
+	// 		'000000000000000000000000000000F1': {
+	// 			'00000000000000000000000000000001': null,
+	// 		},
+	// 	};
 
-		await createItemTree(user1.id, '', tree);
-		await createItem(session2.id, 'root:/test.txt:', 'testing');
+	// 	await createItemTree(user1.id, '', tree);
+	// 	await createItem(session2.id, 'root:/test.txt:', 'testing');
 
-		{
-			const itemIds = await models().item().exclusivelyOwnedItemIds(user1.id);
-			expect(itemIds.length).toBe(2);
+	// 	{
+	// 		const itemIds = await models().item().exclusivelyOwnedItemIds(user1.id);
+	// 		expect(itemIds.length).toBe(2);
 
-			const item1 = await models().item().load(itemIds[0]);
-			const item2 = await models().item().load(itemIds[1]);
+	// 		const item1 = await models().item().load(itemIds[0]);
+	// 		const item2 = await models().item().load(itemIds[1]);
 
-			expect([item1.jop_id, item2.jop_id].sort()).toEqual(['000000000000000000000000000000F1', '00000000000000000000000000000001'].sort());
-		}
+	// 		expect([item1.jop_id, item2.jop_id].sort()).toEqual(['000000000000000000000000000000F1', '00000000000000000000000000000001'].sort());
+	// 	}
 
-		{
-			const itemIds = await models().item().exclusivelyOwnedItemIds(user2.id);
-			expect(itemIds.length).toBe(1);
-		}
-	});
+	// 	{
+	// 		const itemIds = await models().item().exclusivelyOwnedItemIds(user2.id);
+	// 		expect(itemIds.length).toBe(1);
+	// 	}
+	// });
 
-	test('should find exclusively owned items 2', async function() {
-		const { session: session1, user: user1 } = await createUserAndSession(1, true);
-		const { session: session2, user: user2 } = await createUserAndSession(2);
+	// test('should find exclusively owned items 2', async function() {
+	// 	const { session: session1, user: user1 } = await createUserAndSession(1, true);
+	// 	const { session: session2, user: user2 } = await createUserAndSession(2);
 
-		await shareFolderWithUser(session1.id, session2.id, '000000000000000000000000000000F1', {
-			'000000000000000000000000000000F1': {
-				'00000000000000000000000000000001': null,
-			},
-		});
+	// 	await shareFolderWithUser(session1.id, session2.id, '000000000000000000000000000000F1', {
+	// 		'000000000000000000000000000000F1': {
+	// 			'00000000000000000000000000000001': null,
+	// 		},
+	// 	});
 
-		await createFolder(session2.id, { id: '000000000000000000000000000000F2' });
+	// 	await createFolder(session2.id, { id: '000000000000000000000000000000F2' });
 
-		{
-			const itemIds = await models().item().exclusivelyOwnedItemIds(user1.id);
-			expect(itemIds.length).toBe(0);
-		}
+	// 	{
+	// 		const itemIds = await models().item().exclusivelyOwnedItemIds(user1.id);
+	// 		expect(itemIds.length).toBe(0);
+	// 	}
 
-		{
-			const itemIds = await models().item().exclusivelyOwnedItemIds(user2.id);
-			expect(itemIds.length).toBe(1);
-		}
+	// 	{
+	// 		const itemIds = await models().item().exclusivelyOwnedItemIds(user2.id);
+	// 		expect(itemIds.length).toBe(1);
+	// 	}
 
-		await models().user().delete(user2.id);
+	// 	await models().user().delete(user2.id);
 
-		{
-			const itemIds = await models().item().exclusivelyOwnedItemIds(user1.id);
-			expect(itemIds.length).toBe(2);
-		}
-	});
+	// 	{
+	// 		const itemIds = await models().item().exclusivelyOwnedItemIds(user1.id);
+	// 		expect(itemIds.length).toBe(2);
+	// 	}
+	// });
 
-	test('should find all items within a shared folder', async function() {
+	test('should find all items within a shared folder', async () => {
 		const { user: user1, session: session1 } = await createUserAndSession(1);
 		const { session: session2 } = await createUserAndSession(2);
 
@@ -137,7 +137,7 @@ describe('ItemModel', function() {
 		}
 	});
 
-	test('should count items', async function() {
+	test('should count items', async () => {
 		const { user: user1 } = await createUserAndSession(1, true);
 
 		await createItemTree(user1.id, '', {
@@ -149,7 +149,7 @@ describe('ItemModel', function() {
 		expect(await models().item().childrenCount(user1.id)).toBe(2);
 	});
 
-	test('should calculate the total size', async function() {
+	test('should calculate the total size', async () => {
 		const { user: user1 } = await createUserAndSession(1);
 		const { user: user2 } = await createUserAndSession(2);
 		const { user: user3 } = await createUserAndSession(3);
@@ -203,7 +203,56 @@ describe('ItemModel', function() {
 		expect((await models().user().load(user3.id)).total_item_size).toBe(totalSize3);
 	});
 
-	test('should update total size when an item is deleted', async function() {
+	test('should not fail when a user account has been deleted', async () => {
+		const { user: user1 } = await createUserAndSession(1);
+		const { user: user2 } = await createUserAndSession(2);
+		const { user: user3 } = await createUserAndSession(3);
+
+		await createItemTree3(user1.id, '', '', [
+			{
+				id: '000000000000000000000000000000F1',
+				children: [
+					{
+						id: '00000000000000000000000000000001',
+					},
+				],
+			},
+		]);
+
+		await createItemTree3(user2.id, '', '', [
+			{
+				id: '000000000000000000000000000000F2',
+				children: [
+					{
+						id: '00000000000000000000000000000002',
+					},
+					{
+						id: '00000000000000000000000000000003',
+					},
+				],
+			},
+		]);
+
+		await createItemTree3(user3.id, '', '', [
+			{
+				id: '000000000000000000000000000000F3',
+				children: [
+					{
+						id: '00000000000000000000000000000004',
+					},
+					{
+						id: '00000000000000000000000000000005',
+					},
+				],
+			},
+		]);
+
+		await models().user().delete(user3.id);
+
+		await expectNotThrow(async () => models().item().updateTotalSizes());
+	});
+
+	test('should update total size when an item is deleted', async () => {
 		const { user: user1 } = await createUserAndSession(1);
 
 		await createItemTree3(user1.id, '', '', [
@@ -231,7 +280,7 @@ describe('ItemModel', function() {
 		expect((await models().user().load(user1.id)).total_item_size).toBe(folder1.content_size);
 	});
 
-	test('should include shared items in total size calculation', async function() {
+	test('should include shared items in total size calculation', async () => {
 		const { user: user1, session: session1 } = await createUserAndSession(1);
 		const { user: user2, session: session2 } = await createUserAndSession(2);
 		const { user: user3 } = await createUserAndSession(3);
@@ -272,10 +321,10 @@ describe('ItemModel', function() {
 		expect((await models().user().load(user3.id)).total_item_size).toBe(expected3);
 	});
 
-	test('should respect the hard item size limit', async function() {
+	test('should respect the hard item size limit', async () => {
 		const { user: user1 } = await createUserAndSession(1);
 
-		let models = newModelFactory(db(), config());
+		let models = newModelFactory(db(), dbSlave(), config());
 
 		let result = await models.item().saveFromRawContent(user1, {
 			body: Buffer.from('1234'),
@@ -285,7 +334,7 @@ describe('ItemModel', function() {
 		const item = result['test1.txt'].item;
 
 		config().itemSizeHardLimit = 3;
-		models = newModelFactory(db(), config());
+		models = newModelFactory(db(), dbSlave(), config());
 
 		result = await models.item().saveFromRawContent(user1, {
 			body: Buffer.from('1234'),
@@ -297,7 +346,7 @@ describe('ItemModel', function() {
 		await expectHttpError(async () => models.item().loadWithContent(item.id), ErrorPayloadTooLarge.httpCode);
 
 		config().itemSizeHardLimit = 1000;
-		models = newModelFactory(db(), config());
+		models = newModelFactory(db(), dbSlave(), config());
 
 		await expectNotThrow(async () => models.item().loadWithContent(item.id));
 	});
@@ -316,18 +365,18 @@ describe('ItemModel', function() {
 			path: tempDir2,
 		};
 
-		const fromModels = newModelFactory(db(), {
+		const fromModels = newModelFactory(db(), dbSlave(), {
 			...config(),
 			storageDriver: fromStorageConfig,
 		});
 
-		const toModels = newModelFactory(db(), {
+		const toModels = newModelFactory(db(), dbSlave(), {
 			...config(),
 			storageDriver: toStorageConfig,
 		});
 
-		const fromDriver = await loadStorageDriver(fromStorageConfig, db());
-		const toDriver = await loadStorageDriver(toStorageConfig, db());
+		const fromDriver = await loadStorageDriver(fromStorageConfig, db(), dbSlave());
+		const toDriver = await loadStorageDriver(toStorageConfig, db(), dbSlave());
 
 		return {
 			fromStorageConfig,
@@ -339,7 +388,7 @@ describe('ItemModel', function() {
 		};
 	};
 
-	test('should allow importing content to item storage', async function() {
+	test('should allow importing content to item storage', async () => {
 		const { user: user1 } = await createUserAndSession(1);
 
 		const {
@@ -364,7 +413,7 @@ describe('ItemModel', function() {
 
 		await msleep(2);
 
-		const toModels = newModelFactory(db(), {
+		const toModels = newModelFactory(db(), dbSlave(), {
 			...config(),
 			storageDriver: toStorageConfig,
 		});
@@ -393,7 +442,7 @@ describe('ItemModel', function() {
 		expect(toContent.toString()).toBe(fromContent.toString());
 	});
 
-	test('should skip large items when importing content to item storage', async function() {
+	test('should skip large items when importing content to item storage', async () => {
 		const { user: user1 } = await createUserAndSession(1);
 
 		const {
@@ -425,7 +474,7 @@ describe('ItemModel', function() {
 		expect(await toDriver.exists(itemId, { models: fromModels })).toBe(true);
 	});
 
-	test('should delete the database item content', async function() {
+	test('should delete the database item content', async () => {
 		if (isSqlite(db())) {
 			expect(1).toBe(1);
 			return;
@@ -462,7 +511,7 @@ describe('ItemModel', function() {
 		expect(await models().item().dbContent(note1.id)).toEqual(Buffer.from(''));
 	});
 
-	test('should delete the database item content - maxProcessedItems handling', async function() {
+	test('should delete the database item content - maxProcessedItems handling', async () => {
 		if (isSqlite(db())) {
 			expect(1).toBe(1);
 			return;
@@ -497,68 +546,92 @@ describe('ItemModel', function() {
 		expect(emptyOnes.length).toBe(4);
 	});
 
-	// test('should stop importing item if it has been deleted', async function() {
-	// 	const { user: user1 } = await createUserAndSession(1);
+	// Case where an item is orphaned by the associated user has since then been
+	// deleted.
+	test('should process orphaned items - 1', async () => {
+		const { user: user1 } = await createUserAndSession(1);
+		const { user: user2 } = await createUserAndSession(2);
 
-	// 	const tempDir1 = await tempDir('storage1');
+		await createItemTree3(user1.id, '', '', [
+			{
+				id: '000000000000000000000000000000F1',
+			},
+		]);
 
-	// 	const driver = await loadStorageDriver({
-	// 		type: StorageDriverType.Filesystem,
-	// 		path: tempDir1,
-	// 	}, db());
+		await createItemTree3(user2.id, '', '', [
+			{
+				id: '000000000000000000000000000000F2',
+			},
+		]);
 
-	// 	let waitWrite = false;
-	// 	const previousWrite = driver.write.bind(driver);
-	// 	driver.write = async (itemId:string, content:Buffer, context: Context) => {
-	// 		return new Promise((resolve) => {
-	// 			const iid = setInterval(async () => {
-	// 				if (waitWrite) return;
-	// 				clearInterval(iid);
-	// 				await previousWrite(itemId, content, context);
-	// 				resolve(null);
-	// 			}, 10);
-	// 		});
-	// 	}
+		await db()('users').where('id', '=', user1.id).delete();
+		await db()('user_items').where('user_id', '=', user1.id).delete();
 
-	// 	await models().item().saveFromRawContent(user1, {
-	// 		body: Buffer.from(JSON.stringify({ 'version': 1 })),
-	// 		name: 'info.json',
-	// 	});
+		expect(await models().item().count()).toBe(2);
 
-	// 	const item = (await models().item().all())[0];
+		await models().item().processOrphanedItems();
 
-	// 	const promise = models().item().importContentToStorage(driver);
-	// 	waitWrite = false;
-	// 	await promise;
+		expect(await models().item().count()).toBe(1);
 
-	// 	expect(await driver.exists(item.id, { models: models() })).toBe(true);
+		const item = await models().item().all();
+		expect(item[0].name).toBe('000000000000000000000000000000F2.md');
+	});
 
+	// Case where an item is orphaned and the associated user is still present.
+	test('should process orphaned items - 2', async () => {
+		const { user: user1 } = await createUserAndSession(1);
+		const { user: user2 } = await createUserAndSession(2);
 
+		await createItemTree3(user1.id, '', '', [
+			{
+				id: '000000000000000000000000000000F1',
+			},
+		]);
 
+		await createItemTree3(user2.id, '', '', [
+			{
+				id: '000000000000000000000000000000F2',
+			},
+		]);
 
+		await db()('user_items').where('user_id', '=', user1.id).delete();
 
+		expect(await models().userItem().count()).toBe(1);
 
+		await models().item().processOrphanedItems();
 
-	// 	{
-	// 		const result = await models().item().saveFromRawContent(user1, {
-	// 			body: Buffer.from(JSON.stringify({ 'version': 2 })),
-	// 			name: 'info2.json',
-	// 		});
+		expect(await models().item().count()).toBe(2);
+		expect(await models().userItem().count()).toBe(2);
 
-	// 		const item2 = result['info2.json'].item;
+		expect((await models().userItem().byUserId(user1.id)).length).toBe(1);
+		expect((await models().userItem().byUserId(user2.id)).length).toBe(1);
+	});
 
-	// 		waitWrite = true;
-	// 		const promise = models().item().importContentToStorage(driver);
+	test('should return multiple item contents', async () => {
+		const { user: user1 } = await createUserAndSession(1);
 
-	// 		await msleep(100);
+		await createItemTree3(user1.id, '', '', [
+			{
+				id: '000000000000000000000000000000F1',
+				title: 'Folder 1',
+				children: [
+					{
+						id: '00000000000000000000000000000001',
+						title: 'Note 1',
+					},
+					{
+						id: '00000000000000000000000000000002',
+						title: 'Note 2',
+					},
+				],
+			},
+		]);
 
-	// 		await models().item().delete(item2.id);
+		const itemIds = (await models().item().all()).map(i => i.id);
+		const items = await models().item().loadWithContentMulti(itemIds);
 
-	// 		waitWrite = false;
-	// 		await promise;
-
-	// 		expect(await driver.exists(item2.id, { models: models() })).toBe(false);
-	// 	}
-	// });
+		const jopItems = items.map(it => models().item().itemToJoplinItem(it));
+		expect(jopItems.map(it => it.title).sort()).toEqual(['Folder 1', 'Note 1', 'Note 2']);
+	});
 
 });

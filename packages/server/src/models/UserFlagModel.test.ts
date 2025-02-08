@@ -1,7 +1,7 @@
 import { UserFlagType } from '../services/database/types';
 import { beforeAllDb, afterAllTests, beforeEachDb, models, createUserAndSession } from '../utils/testing/testUtils';
 
-describe('UserFlagModel', function() {
+describe('UserFlagModel', () => {
 
 	beforeAll(async () => {
 		await beforeAllDb('UserFlagModel');
@@ -15,7 +15,7 @@ describe('UserFlagModel', function() {
 		await beforeEachDb();
 	});
 
-	test('should create no more than one flag per type', async function() {
+	test('should create no more than one flag per type', async () => {
 		const { user } = await createUserAndSession(1);
 
 		const beforeTime = Date.now();
@@ -37,6 +37,19 @@ describe('UserFlagModel', function() {
 		expect(flagCountAfter2).toBe(flagCountBefore + 1);
 		const differentFlag = await models().userFlag().byUserId(user.id, UserFlagType.FailedPaymentFinal);
 		expect(flag.id).not.toBe(differentFlag.id);
+	});
+
+	test('should set the timestamp when disabling an account', async () => {
+		const { user } = await createUserAndSession(1);
+
+		const beforeTime = Date.now();
+		await models().userFlag().add(user.id, UserFlagType.FailedPaymentFinal);
+
+		expect((await models().user().load(user.id)).disabled_time).toBeGreaterThanOrEqual(beforeTime);
+
+		await models().userFlag().remove(user.id, UserFlagType.FailedPaymentFinal);
+
+		expect((await models().user().load(user.id)).disabled_time).toBe(0);
 	});
 
 });

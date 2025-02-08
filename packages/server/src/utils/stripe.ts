@@ -5,7 +5,7 @@ import { Subscription, Uuid } from '../services/database/types';
 import { Models } from '../models/factory';
 import { AccountType } from '../models/UserModel';
 import { findPrice, PricePeriod } from '@joplin/lib/utils/joplinCloud';
-import { ErrorWithCode } from './errors';
+import { ErrorWithCode, ErrorCode } from './errors';
 const stripeLib = require('stripe');
 
 export interface SubscriptionInfo {
@@ -22,22 +22,22 @@ export function initStripe(): Stripe {
 }
 
 export function priceIdToAccountType(priceId: string): AccountType {
-	const price = findPrice(stripeConfig().prices, { priceId });
+	const price = findPrice(stripeConfig(), { priceId });
 	return price.accountType;
 }
 
 export function accountTypeToPriceId(accountType: AccountType): string {
-	const price = findPrice(stripeConfig().prices, { accountType, period: PricePeriod.Monthly });
+	const price = findPrice(stripeConfig(), { accountType, period: PricePeriod.Monthly });
 	return price.id;
 }
 
 export async function subscriptionInfoByUserId(models: Models, userId: Uuid): Promise<SubscriptionInfo> {
 	const sub = await models.subscription().byUserId(userId);
-	if (!sub) throw new ErrorWithCode('Could not retrieve subscription info', 'no_sub');
+	if (!sub) throw new ErrorWithCode('Could not retrieve subscription info', ErrorCode.NoSub);
 
 	const stripe = initStripe();
 	const stripeSub = await stripe.subscriptions.retrieve(sub.stripe_subscription_id);
-	if (!stripeSub) throw new ErrorWithCode('Could not retrieve Stripe subscription', 'no_stripe_sub');
+	if (!stripeSub) throw new ErrorWithCode('Could not retrieve Stripe subscription', ErrorCode.NoStripeSub);
 
 	return { sub, stripeSub };
 }
@@ -68,8 +68,8 @@ export async function updateSubscriptionType(models: Models, userId: Uuid, newAc
 
 	const { sub, stripeSub } = await subscriptionInfoByUserId(models, userId);
 
-	const currentPrice = findPrice(stripeConfig().prices, { priceId: stripePriceIdByStripeSub(stripeSub) });
-	const upgradePrice = findPrice(stripeConfig().prices, { accountType: newAccountType, period: currentPrice.period });
+	const currentPrice = findPrice(stripeConfig(), { priceId: stripePriceIdByStripeSub(stripeSub) });
+	const upgradePrice = findPrice(stripeConfig(), { accountType: newAccountType, period: currentPrice.period });
 
 	const items: Stripe.SubscriptionUpdateParams.Item[] = [];
 
@@ -126,7 +126,7 @@ export async function isBetaUser(models: Models, userId: Uuid): Promise<boolean>
 	return !sub;
 }
 
-export function betaUserTrialPeriodDays(userCreatedTime: number, fromDateTime: number = 0, minDays: number = 7): number {
+export function betaUserTrialPeriodDays(userCreatedTime: number, fromDateTime = 0, minDays = 7): number {
 	fromDateTime = fromDateTime ? fromDateTime : Date.now();
 
 	const oneDayMs = 86400 * 1000;

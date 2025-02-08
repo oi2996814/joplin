@@ -1,31 +1,24 @@
+import { ThemeStyle } from '@joplin/lib/theme';
+
 const { buildStyle } = require('@joplin/lib/theme');
 
 export default function styles(themeId: number) {
-	return buildStyle('KeymapConfigScreen', themeId, (theme: any) => {
+	return buildStyle('KeymapConfigScreen', themeId, (theme: ThemeStyle) => {
 		return {
 			container: {
 				...theme.containerStyle,
-				padding: theme.configScreenPadding,
+				// padding: theme.configScreenPadding,
 				backgroundColor: theme.backgroundColor3,
 			},
 			actionsContainer: {
 				display: 'flex',
 				flexDirection: 'row',
 			},
-			recorderContainer: {
-				padding: 2,
-				flexGrow: 1,
-			},
 			filterInput: {
 				...theme.inputStyle,
 				flexGrow: 1,
 				minHeight: 29,
 				alignSelf: 'center',
-			},
-			recorderInput: {
-				...theme.inputStyle,
-				minHeight: 29,
-				width: '200px',
 			},
 			label: {
 				...theme.textStyle,
@@ -46,10 +39,6 @@ export default function styles(themeId: number) {
 				...theme.textStyle,
 				width: 'auto',
 			},
-			tableCell: {
-				display: 'flex',
-				flexDirection: 'row',
-			},
 			tableCellContent: {
 				flexGrow: 1,
 				alignSelf: 'center',
@@ -57,6 +46,8 @@ export default function styles(themeId: number) {
 			tableCellStatus: {
 				height: '100%',
 				alignSelf: 'center',
+				border: 'none',
+				background: 'transparent',
 			},
 			kbd: {
 				fontFamily: 'sans-serif',

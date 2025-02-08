@@ -1,8 +1,25 @@
 import * as fs from 'fs-extra';
 import { rootDir, gitPullTry, completeReleaseWithChangelog } from './tool-utils';
-const { unique } = require('@joplin/lib/ArrayUtils');
+import { unique } from '@joplin/lib/ArrayUtils';
+import * as readline from 'readline';
 
 const mobileDir = `${rootDir}/packages/app-mobile`;
+
+const warningMessage = async () => {
+	return new Promise((resolve) => {
+		const rl = readline.createInterface({
+			input: process.stdin,
+			output: process.stdout,
+		});
+
+		console.log('IMPORTANT: Before releasing the iOS app, run `yarn install && yarn buildParallel`. Press Ctrl+C if it has not been done. Press Enter to continue...');
+
+		rl.on('line', () => {
+			rl.close();
+			resolve(null);
+		});
+	});
+};
 
 // Note that it will update all the MARKETING_VERSION and
 // CURRENT_PROJECT_VERSION fields, including for extensions (such as the
@@ -15,7 +32,7 @@ async function updateCodeProjVersions(filePath: string) {
 	let newVersionId = 0;
 
 	// MARKETING_VERSION = 10.1.0;
-	newContent = newContent.replace(/(MARKETING_VERSION = )(\d+\.\d+)\.(\d+)(.*)/g, function(_match, prefix, majorMinorVersion, buildNum, suffix) {
+	newContent = newContent.replace(/(MARKETING_VERSION = )(\d+\.\d+)\.(\d+)(.*)/g, (_match, prefix, majorMinorVersion, buildNum, suffix) => {
 		const n = Number(buildNum);
 		if (isNaN(n)) throw new Error(`Invalid version code: ${buildNum}`);
 		newVersion = `${majorMinorVersion}.${n + 1}`;
@@ -23,7 +40,7 @@ async function updateCodeProjVersions(filePath: string) {
 	});
 
 	// CURRENT_PROJECT_VERSION = 58;
-	newContent = newContent.replace(/(CURRENT_PROJECT_VERSION = )(\d+)(.*)/g, function(_match, prefix, projectVersion, suffix) {
+	newContent = newContent.replace(/(CURRENT_PROJECT_VERSION = )(\d+)(.*)/g, (_match, prefix, projectVersion, suffix) => {
 		const n = Number(projectVersion);
 		if (isNaN(n)) throw new Error(`Invalid version code: ${projectVersion}`);
 		newVersionId = n + 1;
@@ -61,6 +78,8 @@ async function checkDeploymentTargets(filePath: string) {
 async function main() {
 	await gitPullTry();
 
+	await warningMessage();
+
 	const pbxprojFilePath = `${mobileDir}/ios/Joplin.xcodeproj/project.pbxproj`;
 	await checkDeploymentTargets(pbxprojFilePath);
 
@@ -72,7 +91,7 @@ async function main() {
 	const tagName = `ios-v${newVersion}`;
 	console.info(`Tag name: ${tagName}`);
 
-	const changelogPath = `${rootDir}/readme/changelog_ios.md`;
+	const changelogPath = `${rootDir}/readme/about/changelog/ios.md`;
 	await completeReleaseWithChangelog(changelogPath, newVersion, tagName, 'iOS', false);
 }
 

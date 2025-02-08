@@ -1,7 +1,9 @@
+/* eslint-disable jest/require-top-level-describe */
+
 import config from '../../../config';
 import { Item } from '../../../services/database/types';
-import { ErrorCode } from '../../../utils/errors';
-import { createUserAndSession, db, makeNoteSerializedBody, models } from '../../../utils/testing/testUtils';
+import { CustomErrorCode } from '../../../utils/errors';
+import { createUserAndSession, db, dbSlave, makeNoteSerializedBody, models } from '../../../utils/testing/testUtils';
 import { Config, StorageDriverConfig, StorageDriverMode } from '../../../utils/types';
 import newModelFactory from '../../factory';
 import loadStorageDriver from './loadStorageDriver';
@@ -13,11 +15,11 @@ const newTestModels = (driverConfig: StorageDriverConfig, driverConfigFallback: 
 		storageDriver: driverConfig,
 		storageDriverFallback: driverConfigFallback,
 	};
-	return newModelFactory(db(), newConfig);
+	return newModelFactory(db(), dbSlave(), newConfig);
 };
 
 export function shouldWriteToContentAndReadItBack(driverConfig: StorageDriverConfig) {
-	test('should write to content and read it back', async function() {
+	test('should write to content and read it back', async () => {
 		const { user } = await createUserAndSession(1);
 		const noteBody = makeNoteSerializedBody({
 			id: '00000000000000000000000000000001',
@@ -49,7 +51,7 @@ export function shouldWriteToContentAndReadItBack(driverConfig: StorageDriverCon
 }
 
 export function shouldDeleteContent(driverConfig: StorageDriverConfig) {
-	test('should delete the content', async function() {
+	test('should delete the content', async () => {
 		const { user } = await createUserAndSession(1);
 		const noteBody = makeNoteSerializedBody({
 			id: '00000000000000000000000000000001',
@@ -72,7 +74,7 @@ export function shouldDeleteContent(driverConfig: StorageDriverConfig) {
 }
 
 export function shouldNotCreateItemIfContentNotSaved(driverConfig: StorageDriverConfig) {
-	test('should not create the item if the content cannot be saved', async function() {
+	test('should not create the item if the content cannot be saved', async () => {
 		const testModels = newTestModels(driverConfig);
 		const driver = await testModels.item().storageDriver();
 
@@ -100,7 +102,7 @@ export function shouldNotCreateItemIfContentNotSaved(driverConfig: StorageDriver
 }
 
 export function shouldNotUpdateItemIfContentNotSaved(driverConfig: StorageDriverConfig) {
-	test('should not update the item if the content cannot be saved', async function() {
+	test('should not update the item if the content cannot be saved', async () => {
 		const { user } = await createUserAndSession(1);
 		const noteBody = makeNoteSerializedBody({
 			id: '00000000000000000000000000000001',
@@ -152,7 +154,7 @@ export function shouldNotUpdateItemIfContentNotSaved(driverConfig: StorageDriver
 }
 
 export function shouldSupportFallbackDriver(driverConfig: StorageDriverConfig, fallbackDriverConfig: StorageDriverConfig) {
-	test('should support fallback content drivers', async function() {
+	test('should support fallback content drivers', async () => {
 		const { user } = await createUserAndSession(1);
 
 		const testModels = newTestModels(driverConfig);
@@ -209,7 +211,7 @@ export function shouldSupportFallbackDriver(driverConfig: StorageDriverConfig, f
 }
 
 export function shouldSupportFallbackDriverInReadWriteMode(driverConfig: StorageDriverConfig, fallbackDriverConfig: StorageDriverConfig) {
-	test('should support fallback content drivers in rw mode', async function() {
+	test('should support fallback content drivers in rw mode', async () => {
 		if (fallbackDriverConfig.mode !== StorageDriverMode.ReadAndWrite) throw new Error('Content driver must be configured in RW mode for this test');
 
 		const { user } = await createUserAndSession(1);
@@ -242,7 +244,7 @@ export function shouldSupportFallbackDriverInReadWriteMode(driverConfig: Storage
 }
 
 export function shouldUpdateContentStorageIdAfterSwitchingDriver(oldDriverConfig: StorageDriverConfig, newDriverConfig: StorageDriverConfig) {
-	test('should update content storage ID after switching driver', async function() {
+	test('should update content storage ID after switching driver', async () => {
 		if (oldDriverConfig.type === newDriverConfig.type) throw new Error('Drivers must be different for this test');
 
 		const { user } = await createUserAndSession(1);
@@ -278,9 +280,10 @@ export function shouldUpdateContentStorageIdAfterSwitchingDriver(oldDriverConfig
 }
 
 export function shouldThrowNotFoundIfNotExist(driverConfig: StorageDriverConfig) {
-	test('should throw not found if item does not exist', async function() {
-		const driver = await loadStorageDriver(driverConfig, db());
+	test('should throw not found if item does not exist', async () => {
+		const driver = await loadStorageDriver(driverConfig, db(), dbSlave());
 
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 		let error: any = null;
 		try {
 			await driver.read('doesntexist', { models: models() });
@@ -289,6 +292,6 @@ export function shouldThrowNotFoundIfNotExist(driverConfig: StorageDriverConfig)
 		}
 
 		expect(error).toBeTruthy();
-		expect(error.code).toBe(ErrorCode.NotFound);
+		expect(error.code).toBe(CustomErrorCode.NotFound);
 	});
 }

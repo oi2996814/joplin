@@ -15,6 +15,7 @@ interface SubRequest {
 	method: HttpMethod;
 	url: string;
 	headers: Record<string, string>;
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	body: any;
 }
 
@@ -22,7 +23,9 @@ type SubRequests = Record<string, SubRequest>;
 
 interface SubRequestResponse {
 	status: number;
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	body: any;
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	header: Record<string, any>;
 }
 
@@ -84,7 +87,7 @@ router.post('api/batch', async (_path: SubPath, ctx: AppContext) => {
 
 		response[subRequestId] = {
 			status: r.status,
-			body: typeof r.body === 'object' ? { ...r.body } : r.body,
+			body: typeof r.body === 'object' ? { ...(r.body as object) } : r.body,
 			header: r.header ? { ...r.header } : {},
 		};
 	}

@@ -5,7 +5,7 @@ let perFieldReverse: { [field: string]: boolean } = null;
 
 export const notesSortOrderFieldArray = (): string[] => {
 	// The order of the fields is strictly determinate.
-	if (fields == null) {
+	if (fields === null) {
 		fields = Setting.enumOptionValues('notes.sortOrder.field').sort().reverse();
 	}
 	return fields;
@@ -22,7 +22,7 @@ export const notesSortOrderNextField = (currentField: string) => {
 };
 
 export const setNotesSortOrder = (field?: string, reverse?: boolean) => {
-	// field: Sort order's field. undefined means changing a field cyclicly.
+	// field: Sort order's field. undefined means changing a field cyclically.
 	// reverse: whether the sort order is reversed or not. undefined means toggling.
 	let nextField = field;
 	let nextReverse = reverse;
@@ -60,7 +60,8 @@ export const setNotesSortOrder = (field?: string, reverse?: boolean) => {
 		nextReverse = !!nextReverse;
 		if (perFieldReverse[nextField] !== nextReverse) {
 			perFieldReverse[nextField] = nextReverse;
-			Setting.setValue('notes.perFieldReverse', { ...perFieldReverse });
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Partial refactor of old code before rule was applied
+			Setting.setValue('notes.perFieldReverse', { ...perFieldReverse } as any);
 		}
 	}
 };

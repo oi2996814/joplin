@@ -1,4 +1,4 @@
-const Logger = require('@joplin/lib/Logger').default;
+const Logger = require('@joplin/utils/Logger').default;
 const Folder = require('@joplin/lib/models/Folder').default;
 const BaseItem = require('@joplin/lib/models/BaseItem').default;
 const Tag = require('@joplin/lib/models/Tag').default;
@@ -8,7 +8,7 @@ const Resource = require('@joplin/lib/models/Resource').default;
 const Setting = require('@joplin/lib/models/Setting').default;
 const reducer = require('@joplin/lib/reducer').default;
 const { defaultState } = require('@joplin/lib/reducer');
-const { splitCommandString } = require('@joplin/lib/string-utils.js');
+const { splitCommandString } = require('@joplin/utils');
 const { reg } = require('@joplin/lib/registry.js');
 const { _ } = require('@joplin/lib/locale');
 const shim = require('@joplin/lib/shim').default;
@@ -31,9 +31,9 @@ const WindowWidget = require('tkwidgets/WindowWidget.js');
 const NoteWidget = require('./gui/NoteWidget.js');
 const ResourceServer = require('./ResourceServer.js');
 const NoteMetadataWidget = require('./gui/NoteMetadataWidget.js');
-const FolderListWidget = require('./gui/FolderListWidget.js');
+const FolderListWidget = require('./gui/FolderListWidget').default;
 const NoteListWidget = require('./gui/NoteListWidget.js');
-const StatusBarWidget = require('./gui/StatusBarWidget.js');
+const StatusBarWidget = require('./gui/StatusBarWidget').default;
 const ConsoleWidget = require('./gui/ConsoleWidget.js');
 const LinkSelector = require('./LinkSelector.js').default;
 
@@ -302,7 +302,7 @@ class AppGui {
 		const output = [];
 
 		for (let i = 0; i < keymap.length; i++) {
-			const item = Object.assign({}, keymap[i]);
+			const item = { ...keymap[i] };
 
 			if (!item.command) throw new Error(`Missing command for keymap item: ${JSON.stringify(item)}`);
 
@@ -375,6 +375,11 @@ class AppGui {
 		this.showNoteMetadata(!this.widget('noteMetadata').shown);
 	}
 
+	toggleFolderIds() {
+		this.widget('folderList').toggleShowIds();
+		this.widget('noteList').toggleShowIds();
+	}
+
 	widget(name) {
 		if (name === 'root') return this.rootWidget_;
 		return this.rootWidget_.childByName(name);
@@ -412,7 +417,7 @@ class AppGui {
 		const widget = this.widget('mainWindow').focusedWidget;
 		if (!widget) return null;
 
-		if (widget.name == 'noteList' || widget.name == 'folderList') {
+		if (widget.name === 'noteList' || widget.name === 'folderList') {
 			return widget.currentItem;
 		}
 
@@ -422,7 +427,7 @@ class AppGui {
 	async handleModelAction(action) {
 		this.logger().info('Action:', action);
 
-		const state = Object.assign({}, defaultState);
+		const state = { ...defaultState };
 		state.notes = this.widget('noteList').items;
 
 		const newState = reducer(state, action);
@@ -436,6 +441,7 @@ class AppGui {
 		if (cmd === 'activate') {
 			const w = this.widget('mainWindow').focusedWidget;
 			if (w.name === 'folderList') {
+				// eslint-disable-next-line no-restricted-properties
 				this.widget('noteList').focus();
 			} else if (w.name === 'noteList' || w.name === 'noteText') {
 				this.processPromptCommand('edit $n');
@@ -477,7 +483,7 @@ class AppGui {
 			if (this.linkSelector_.link) {
 				this.term_.moveTo(
 					this.linkSelector_.noteX + cursorOffsetX,
-					this.linkSelector_.noteY + cursorOffsetY
+					this.linkSelector_.noteY + cursorOffsetY,
 				);
 				shim.setTimeout(() => this.term_.term().inverse(this.linkSelector_.link), 50);
 			}
@@ -498,6 +504,8 @@ class AppGui {
 			}
 		} else if (cmd === 'toggle_metadata') {
 			this.toggleNoteMetadata();
+		} else if (cmd === 'toggle_ids') {
+			this.toggleFolderIds();
 		} else if (cmd === 'enter_command_line_mode') {
 			const cmd = await this.widget('statusBar').prompt();
 			if (!cmd) return;
@@ -521,11 +529,11 @@ class AppGui {
 			const args = splitCommandString(cmd);
 
 			for (let i = 0; i < args.length; i++) {
-				if (args[i] == '$n') {
+				if (args[i] === '$n') {
 					args[i] = note ? note.id : '';
-				} else if (args[i] == '$b') {
+				} else if (args[i] === '$b') {
 					args[i] = folder ? folder.id : '';
-				} else if (args[i] == '$c') {
+				} else if (args[i] === '$c') {
 					const item = this.activeListItem();
 					args[i] = item ? item.id : '';
 				}

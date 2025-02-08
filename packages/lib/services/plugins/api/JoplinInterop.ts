@@ -1,5 +1,10 @@
+/* eslint-disable multiline-comment-style */
+
 import InteropService from '../../interop/InteropService';
-import { Module, ModuleType } from '../../interop/types';
+import InteropService_Exporter_Custom from '../../interop/InteropService_Exporter_Custom';
+import InteropService_Importer_Custom from '../../interop/InteropService_Importer_Custom';
+import { makeExportModule, makeImportModule } from '../../interop/Module';
+import { ModuleType } from '../../interop/types';
 import { ExportModule, ImportModule } from './types';
 
 /**
@@ -12,28 +17,32 @@ import { ExportModule, ImportModule } from './types';
  *
  * See the documentation of the [[ExportModule]] and [[ImportModule]] for more information.
  *
- * You may also want to refer to the Joplin API documentation to see the list of properties for each item (note, notebook, etc.) - https://joplinapp.org/api/references/rest_api/
+ * You may also want to refer to the Joplin API documentation to see the list of properties for each item (note, notebook, etc.) - https://joplinapp.org/help/api/references/rest_api
+ *
+ * <span class="platform-desktop">desktop</span>: While it is possible to register import and export
+ * modules on mobile, there is no GUI to activate them.
  */
 export default class JoplinInterop {
 
-	async registerExportModule(module: ExportModule) {
-		const internalModule: Module = {
-			...module,
+	public async registerExportModule(module: ExportModule) {
+		const internalModule = makeExportModule({
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+			...module as any,
 			type: ModuleType.Exporter,
-			isCustom: true,
 			fileExtensions: module.fileExtensions ? module.fileExtensions : [],
-		};
+		}, () => new InteropService_Exporter_Custom(module));
 
 		return InteropService.instance().registerModule(internalModule);
 	}
 
-	async registerImportModule(module: ImportModule) {
-		const internalModule: Module = {
+	public async registerImportModule(module: ImportModule) {
+		const internalModule = makeImportModule({
 			...module,
 			type: ModuleType.Importer,
-			isCustom: true,
 			fileExtensions: module.fileExtensions ? module.fileExtensions : [],
-		};
+		}, () => {
+			return new InteropService_Importer_Custom(module);
+		});
 
 		return InteropService.instance().registerModule(internalModule);
 	}

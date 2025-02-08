@@ -5,18 +5,18 @@ export default class MigrationService extends BaseService {
 
 	private static instance_: MigrationService;
 
-	static instance() {
+	public static instance() {
 		if (this.instance_) return this.instance_;
 		this.instance_ = new MigrationService();
 		return this.instance_;
 	}
 
-	async runScript(num: number) {
+	public async runScript(num: number) {
 		const script = Migration.script(num);
 		await script.exec();
 	}
 
-	async run() {
+	public async run() {
 		const migrations = await Migration.migrationsToDo();
 
 		for (const migration of migrations) {
@@ -24,7 +24,7 @@ export default class MigrationService extends BaseService {
 
 			try {
 				await this.runScript(migration.number);
-				await Migration.delete(migration.id);
+				await Migration.delete(migration.id, { sourceDescription: 'MigrationService' });
 			} catch (error) {
 				this.logger().error(`Cannot run migration: ${migration.number}`, error);
 				break;

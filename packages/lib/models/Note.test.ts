@@ -2,14 +2,19 @@ import Setting from './Setting';
 import BaseModel from '../BaseModel';
 import shim from '../shim';
 import markdownUtils from '../markdownUtils';
-import { sortedIds, createNTestNotes, setupDatabaseAndSynchronizer, switchClient, checkThrowAsync, supportDir } from '../testing/test-utils';
+import { sortedIds, createNTestNotes, expectThrow, setupDatabaseAndSynchronizer, switchClient, checkThrowAsync, supportDir, expectNotThrow, simulateReadOnlyShareEnv, msleep, db } from '../testing/test-utils';
 import Folder from './Folder';
 import Note from './Note';
 import Tag from './Tag';
 import ItemChange from './ItemChange';
 import Resource from './Resource';
 import { ResourceEntity } from '../services/database/types';
-const ArrayUtils = require('../ArrayUtils.js');
+import { toForwardSlashes } from '../path-utils';
+import * as ArrayUtils from '../ArrayUtils';
+import { ErrorCode } from '../errors';
+import SearchEngine from '../services/search/SearchEngine';
+import { getTrashFolderId } from '../services/trash';
+import getConflictFolderId from './utils/getConflictFolderId';
 
 async function allItems() {
 	const folders = await Folder.all();
@@ -17,11 +22,10 @@ async function allItems() {
 	return folders.concat(notes);
 }
 
-describe('models/Note', function() {
-	beforeEach(async (done) => {
+describe('models/Note', () => {
+	beforeEach(async () => {
 		await setupDatabaseAndSynchronizer(1);
 		await switchClient(1);
-		done();
 	});
 
 	it('should find resource and note IDs', (async () => {
@@ -60,8 +64,8 @@ describe('models/Note', function() {
 			const t = testCases[i];
 
 			const input = t[0] as string;
-			const expected = t[1];
-			const actual = Note.linkedItemIds(input);
+			const expected = t[1] as string[];
+			const actual = Note.linkedItemIds(input) as string[];
 			const contentEquals = ArrayUtils.contentEquals(actual, expected);
 
 			// console.info(contentEquals, input, expected, actual);
@@ -105,6 +109,7 @@ describe('models/Note', function() {
 		for (let i = 0; i < testCases.length; i++) {
 			const t = testCases[i];
 
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 			const input: any = t[0];
 
 			const note1 = await Note.save(input);
@@ -119,6 +124,8 @@ describe('models/Note', function() {
 	it('should reset fields for a duplicate', (async () => {
 		const folder1 = await Folder.save({ title: 'folder1' });
 		const note1 = await Note.save({ title: 'note', parent_id: folder1.id });
+
+		await msleep(1);
 
 		const duplicatedNote = await Note.duplicate(note1.id);
 
@@ -164,6 +171,8 @@ describe('models/Note', function() {
 
 		expect(note.body).toContain(resource.id);
 		expect(duplicatedNote.body).toContain(duplicatedResource.id);
+		expect(duplicatedResource.share_id).toBe('');
+		expect(duplicatedResource.is_shared).toBe(0);
 	}));
 
 	it('should delete a set of notes', (async () => {
@@ -259,7 +268,8 @@ describe('models/Note', function() {
 		const t1 = r1.updated_time;
 		const t2 = r2.updated_time;
 
-		const resourceDirE = markdownUtils.escapeLinkUrl(resourceDir);
+		const resourceDirE = markdownUtils.escapeLinkUrl(toForwardSlashes(resourceDir));
+		const fileProtocol = `file://${process.platform === 'win32' ? '/' : ''}`;
 
 		const testCases = [
 			[
@@ -285,17 +295,17 @@ describe('models/Note', function() {
 			[
 				true,
 				`![](:/${r1.id})`,
-				`![](file://${resourceDirE}/${r1.id}.jpg?t=${t1})`,
+				`![](${fileProtocol}${resourceDirE}/${r1.id}.jpg?t=${t1})`,
 			],
 			[
 				true,
 				`![](:/${r1.id}) ![](:/${r1.id}) ![](:/${r2.id})`,
-				`![](file://${resourceDirE}/${r1.id}.jpg?t=${t1}) ![](file://${resourceDirE}/${r1.id}.jpg?t=${t1}) ![](file://${resourceDirE}/${r2.id}.jpg?t=${t2})`,
+				`![](${fileProtocol}${resourceDirE}/${r1.id}.jpg?t=${t1}) ![](${fileProtocol}${resourceDirE}/${r1.id}.jpg?t=${t1}) ![](${fileProtocol}${resourceDirE}/${r2.id}.jpg?t=${t2})`,
 			],
 			[
 				true,
 				`![](:/${r3.id})`,
-				`![](file://${resourceDirE}/${r3.id}.pdf)`,
+				`![](${fileProtocol}${resourceDirE}/${r3.id}.pdf)`,
 			],
 		];
 
@@ -370,12 +380,14 @@ describe('models/Note', function() {
 
 	it('should create a conflict note', async () => {
 		const folder = await Folder.save({ title: 'Source Folder' });
-		const origNote = await Note.save({ title: 'note', parent_id: folder.id });
+		const origNote = await Note.save({ title: 'note', parent_id: folder.id, share_id: 'SHARE', is_shared: 1 });
 		const conflictedNote = await Note.createConflictNote(origNote, ItemChange.SOURCE_SYNC);
 
 		expect(conflictedNote.is_conflict).toBe(1);
 		expect(conflictedNote.conflict_original_id).toBe(origNote.id);
 		expect(conflictedNote.parent_id).toBe(folder.id);
+		expect(conflictedNote.is_shared).toBeUndefined();
+		expect(conflictedNote.share_id).toBe('');
 	});
 
 	it('should copy conflicted note to target folder and cancel conflict', (async () => {
@@ -408,4 +420,191 @@ describe('models/Note', function() {
 		expect(movedNote.conflict_original_id).toBe('');
 	}));
 
+	function testResourceReplacement(body: string, pathsToTry: string[], expected: string) {
+		expect(Note['replaceResourceExternalToInternalLinks_'](pathsToTry, body)).toBe(expected);
+	}
+
+	test('basic replacement', () => {
+		const body = '![image.png](file:///C:Users/Username/resources/849eae4dade045298c107fc706b6d2bc.png?t=1655192326803)';
+		const pathsToTry = ['file:///C:Users/Username/resources'];
+		const expected = '![image.png](:/849eae4dade045298c107fc706b6d2bc)';
+		testResourceReplacement(body, pathsToTry, expected);
+	});
+
+	test('replacement with spaces', () => {
+		const body = '![image.png](file:///C:Users/Username%20with%20spaces/resources/849eae4dade045298c107fc706b6d2bc.png?t=1655192326803)';
+		const pathsToTry = ['file:///C:Users/Username with spaces/resources'];
+		const expected = '![image.png](:/849eae4dade045298c107fc706b6d2bc)';
+		testResourceReplacement(body, pathsToTry, expected);
+	});
+
+	test('replacement with Non-ASCII', () => {
+		const body = '![image.png](file:///C:Users/UsernameWith%C3%A9%C3%A0%C3%B6/resources/849eae4dade045298c107fc706b6d2bc.png?t=1655192326803)';
+		const pathsToTry = ['file:///C:Users/UsernameWithéàö/resources'];
+		const expected = '![image.png](:/849eae4dade045298c107fc706b6d2bc)';
+		testResourceReplacement(body, pathsToTry, expected);
+	});
+
+	test('replacement with Non-ASCII and spaces', () => {
+		const body = '![image.png](file:///C:Users/Username%20With%20%C3%A9%C3%A0%C3%B6/resources/849eae4dade045298c107fc706b6d2bc.png?t=1655192326803)';
+		const pathsToTry = ['file:///C:Users/Username With éàö/resources'];
+		const expected = '![image.png](:/849eae4dade045298c107fc706b6d2bc)';
+		testResourceReplacement(body, pathsToTry, expected);
+	});
+
+	it('should not allow modifying a read-only note', async () => {
+		const folder = await Folder.save({ });
+		const note = await Note.save({ parent_id: folder.id });
+
+		const cleanup = simulateReadOnlyShareEnv('123456789');
+
+		await expectNotThrow(async () => await Note.save({ id: note.id, title: 'can do this' }));
+
+		await Folder.save({ id: folder.id, share_id: '123456789' });
+		await Note.save({ id: note.id, share_id: '123456789' });
+
+		await expectThrow(async () => await Note.save({ id: note.id, title: 'cannot do this!' }), ErrorCode.IsReadOnly);
+
+		await expectNotThrow(async () => await Note.save({ id: note.id, title: 'But it can be updated via sync' }, { changeSource: ItemChange.SOURCE_SYNC }));
+
+		cleanup();
+	});
+
+	it('should not allow deleting a read-only note', async () => {
+		const folder = await Folder.save({ });
+		const note1 = await Note.save({ parent_id: folder.id });
+
+		const cleanup = simulateReadOnlyShareEnv('123456789');
+
+		await Folder.save({ id: folder.id, share_id: '123456789' });
+		await Note.save({ id: note1.id, share_id: '123456789' });
+
+		await expectThrow(async () => await Note.delete(note1.id), ErrorCode.IsReadOnly);
+
+		cleanup();
+	});
+
+	it('should not allow creating a new note as a child of a read-only folder', (async () => {
+		const cleanup = simulateReadOnlyShareEnv('123456789');
+
+		const readonlyFolder = await Folder.save({ share_id: '123456789' });
+		await expectThrow(async () => Note.save({ parent_id: readonlyFolder.id }), ErrorCode.IsReadOnly);
+
+		cleanup();
+	}));
+
+	it('should not allow adding an existing note as a child of a read-only folder', (async () => {
+		const cleanup = simulateReadOnlyShareEnv('123456789');
+
+		const readonlyFolder = await Folder.save({ share_id: '123456789' });
+		const note = await Note.save({});
+		await expectThrow(async () => Note.save({ id: note.id, parent_id: readonlyFolder.id }), ErrorCode.IsReadOnly);
+
+		cleanup();
+	}));
+
+	it('should delete a note to trash', async () => {
+		const folder = await Folder.save({});
+		const note1 = await Note.save({ title: 'note1', parent_id: folder.id });
+		const note2 = await Note.save({ title: 'note2', parent_id: folder.id });
+
+		const previousUpdatedTime = note1.updated_time;
+
+		await msleep(1);
+
+		await Note.delete(note1.id, { toTrash: true });
+
+		{
+			const n1 = await Note.load(note1.id);
+			expect(n1.deleted_time).toBeGreaterThan(0);
+			expect(n1.updated_time).toBeGreaterThan(previousUpdatedTime);
+			expect(n1.deleted_time).toBe(n1.updated_time);
+
+			const n2 = await Note.load(note2.id);
+			expect(n2.deleted_time).toBe(0);
+		}
+
+		{
+			const previews = await Note.previews(folder.id);
+			expect(previews.length).toBe(1);
+			expect(previews.find(n => n.id === note2.id)).toBeTruthy();
+		}
+
+		{
+			const engine = new SearchEngine();
+			engine.setDb(db());
+			await engine.syncTables();
+
+			const results = await engine.search('note*');
+			expect(results.length).toBe(1);
+			expect(results[0].id).toBe(note2.id);
+		}
+	});
+
+	it('should return the notes from the trash', async () => {
+		const folder = await Folder.save({});
+		const note1 = await Note.save({ title: 'note1', parent_id: folder.id });
+		const note2 = await Note.save({ title: 'note2', parent_id: folder.id });
+		const note3 = await Note.save({ title: 'note3', parent_id: folder.id });
+
+		await Note.delete(note1.id, { toTrash: true });
+		await Note.delete(note2.id, { toTrash: true });
+
+		const folderNotes = await Note.previews(folder.id);
+		const trashNotes = await Note.previews(getTrashFolderId());
+
+		expect(folderNotes.map(f => f.id).sort()).toEqual([note3.id]);
+		expect(trashNotes.map(f => f.id).sort()).toEqual([note1.id, note2.id].sort());
+	});
+
+	it('should handle folders within the trash', async () => {
+		const folder1 = await Folder.save({ title: 'folder1 ' });
+		const folder2 = await Folder.save({ title: 'folder2 ' });
+		const note1 = await Note.save({ title: 'note1', parent_id: folder1.id });
+		const note2 = await Note.save({ title: 'note2', parent_id: folder1.id });
+		await Note.save({ title: 'note3', parent_id: folder2.id });
+		const note4 = await Note.save({ title: 'note4', parent_id: folder2.id });
+
+		await Folder.delete(folder1.id, { toTrash: true, deleteChildren: true });
+		await Note.delete(note4.id, { toTrash: true });
+
+		// Note 4 should be at the root of the trash since its associated folder
+		// has not been deleted.
+		{
+			const trashNotes = await Note.previews(getTrashFolderId());
+			expect(trashNotes.length).toBe(1);
+			expect(trashNotes[0].id).toBe(note4.id);
+		}
+
+		// Note 1 and 2 should be within a "folder1" sub-folder within the trash
+		// since that folder has been deleted too.
+		{
+			const trashNotes = await Note.previews(folder1.id);
+			expect(trashNotes.length).toBe(2);
+			expect(trashNotes.map(n => n.id).sort()).toEqual([note1.id, note2.id].sort());
+		}
+	});
+
+	it('should allow deleting conflicts to the trash', async () => {
+		const folder = await Folder.save({});
+
+		const notes = [];
+		for (let i = 0; i < 3; i++) {
+			notes.push(await Note.save({ title: `note${i}`, parent_id: folder.id, is_conflict: 1 }));
+		}
+
+		// Should be in the conflicts folder
+		expect(await Note.previews(getTrashFolderId())).toHaveLength(0);
+		expect(await Note.previews(getConflictFolderId())).toHaveLength(3);
+		expect(await Note.conflictedCount()).toBe(3);
+
+		// Should be moved to the trash folder on delete
+		for (const note of notes) {
+			await Note.delete(note.id, { toTrash: true });
+		}
+
+		expect(await Note.previews(getTrashFolderId())).toHaveLength(3);
+		expect(await Note.previews(getConflictFolderId())).toHaveLength(0);
+		expect(await Note.conflictedCount()).toBe(0);
+	});
 });

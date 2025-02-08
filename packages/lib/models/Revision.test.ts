@@ -1,13 +1,12 @@
 import { expectNotThrow, naughtyStrings, setupDatabaseAndSynchronizer, switchClient } from '../testing/test-utils';
 import Note from '../models/Note';
-import Revision from '../models/Revision';
+import Revision, { ObjectPatch } from '../models/Revision';
 
-describe('models/Revision', function() {
+describe('models/Revision', () => {
 
-	beforeEach(async (done) => {
+	beforeEach(async () => {
 		await setupDatabaseAndSynchronizer(1);
 		await switchClient(1);
-		done();
 	});
 
 	it('should create patches of text and apply it', (async () => {
@@ -50,6 +49,7 @@ describe('models/Revision', function() {
 
 		for (const t of testCases) {
 			const [expected, input] = t;
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 			expect(Revision.isEmptyRevision(input as any)).toBe(expected);
 		}
 	});
@@ -139,6 +139,53 @@ describe('models/Revision', function() {
 		expect(JSON.stringify(merged)).toBe(JSON.stringify(newObject));
 	}));
 
+	it('should handle invalid object patch', (async () => {
+		const oldObject = {
+			one: '123',
+			two: '456',
+			three: '789',
+		};
+
+		const brokenPatch = `{"new":{"four":"444
+"},"deleted":["one"]}`;
+
+		const expected = {
+			two: '456',
+			three: '789',
+			four: '444',
+		};
+
+		const merged = Revision.applyObjectPatch(oldObject, brokenPatch);
+
+		expect(JSON.stringify(merged)).toBe(JSON.stringify(expected));
+	}));
+
+	it('should not strip off newlines from object values', (async () => {
+		const oldObject = {
+			one: '123',
+			two: '456',
+			three: '789',
+		};
+
+		const patch: ObjectPatch = {
+			'new': {
+				'four': 'one line\ntwo line',
+			},
+			'deleted': [],
+		};
+
+		const expected = {
+			one: '123',
+			two: '456',
+			three: '789',
+			four: 'one line\ntwo line',
+		};
+
+		const merged = Revision.applyObjectPatch(oldObject, JSON.stringify(patch));
+
+		expect(JSON.stringify(merged)).toBe(JSON.stringify(expected));
+	}));
+
 	it('should move target revision to the top', (async () => {
 		const revs = [
 			{ id: '123' },
@@ -158,6 +205,7 @@ describe('models/Revision', function() {
 		expect(newRevs[2].id).toBe('789');
 	}));
 
+	// cSpell:disable
 	it('should create patch stats', (async () => {
 		const tests = [
 			{
@@ -182,6 +230,10 @@ describe('models/Revision', function() {
  %0A%0A# `,
 				expected: [-(19 + 27 + 2), 17 + 67 + 4],
 			},
+			{
+				patch: '',
+				expected: [-0, +0],
+			},
 		];
 
 		for (const test of tests) {
@@ -190,5 +242,6 @@ describe('models/Revision', function() {
 			expect(stats.added).toBe(test.expected[1]);
 		}
 	}));
+	// cSpell:enable
 
 });

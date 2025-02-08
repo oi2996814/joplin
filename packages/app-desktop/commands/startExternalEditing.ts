@@ -7,7 +7,7 @@ const bridge = require('@electron/remote').require('./bridge').default;
 
 export const declaration: CommandDeclaration = {
 	name: 'startExternalEditing',
-	label: () => _('Edit in external editor'),
+	label: () => _('Open in external editor'),
 	iconName: 'icon-share',
 };
 
@@ -23,6 +23,6 @@ export const runtime = (): CommandRuntime => {
 				bridge().showErrorMessageBox(_('Error opening note in editor: %s', error.message));
 			}
 		},
-		enabledCondition: 'oneNoteSelected',
+		enabledCondition: 'oneNoteSelected && !noteIsReadOnly',
 	};
 };

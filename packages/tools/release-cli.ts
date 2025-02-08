@@ -1,26 +1,27 @@
-import { execCommand2, rootDir, completeReleaseWithChangelog } from './tool-utils';
+import { execCommand } from '@joplin/utils';
+import { rootDir, completeReleaseWithChangelog } from './tool-utils';
 
 const appDir = `${rootDir}/packages/app-cli`;
-const changelogPath = `${rootDir}/readme/changelog_cli.md`;
+const changelogPath = `${rootDir}/readme/about/changelog/cli.md`;
 
 // Start with node Tools/release-cli.js --changelog-from cli-v1.0.126
 // to specify from where the changelog should be created
 async function main() {
 	process.chdir(appDir);
 
-	await execCommand2('git pull');
+	await execCommand('git pull');
 
-	const newVersion = (await execCommand2('yarn version patch')).trim();
+	const newVersion = (await execCommand('npm version patch')).trim();
 	console.info(`Building ${newVersion}...`);
 	const newTag = `cli-${newVersion}`;
 
-	await execCommand2('touch app/main.js');
-	await execCommand2('yarn run build');
-	await execCommand2('cp ../../README.md build/');
+	await execCommand('touch app/main.js');
+	await execCommand('yarn build');
+	await execCommand('cp ../../README.md build/');
 
 	process.chdir(`${appDir}/build`);
 
-	await execCommand2('yarn publish');
+	await execCommand('npm publish');
 
 	await completeReleaseWithChangelog(changelogPath, newVersion, newTag, 'CLI', false);
 }

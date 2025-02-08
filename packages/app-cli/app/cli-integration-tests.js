@@ -1,7 +1,9 @@
 'use strict';
 
+/* eslint-disable no-console */
+
 const fs = require('fs-extra');
-const Logger = require('@joplin/lib/Logger').default;
+const Logger = require('@joplin/utils/Logger').default;
 const { dirname } = require('@joplin/lib/path-utils');
 const { DatabaseDriverNode } = require('@joplin/lib/database-driver-node.js');
 const JoplinDatabase = require('@joplin/lib/JoplinDatabase').default;
@@ -222,7 +224,7 @@ async function main() {
 
 	for (const n in testUnits) {
 		if (!testUnits.hasOwnProperty(n)) continue;
-		if (onlyThisTest && n != onlyThisTest) continue;
+		if (onlyThisTest && n !== onlyThisTest) continue;
 
 		await clearDatabase();
 		const testName = n.substr(4).toLowerCase();

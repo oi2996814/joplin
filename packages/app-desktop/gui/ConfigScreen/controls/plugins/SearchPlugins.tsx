@@ -8,8 +8,9 @@ import { PluginManifest } from '@joplin/lib/services/plugins/utils/types';
 import PluginBox, { InstallState } from './PluginBox';
 import PluginService, { PluginSettings } from '@joplin/lib/services/plugins/PluginService';
 import { _ } from '@joplin/lib/locale';
-import useOnInstallHandler from './useOnInstallHandler';
+import useOnInstallHandler from '@joplin/lib/components/shared/config/plugins/useOnInstallHandler';
 import { themeStyle } from '@joplin/lib/theme';
+import SettingDescription from '../SettingDescription';
 
 const Root = styled.div`
 `;
@@ -24,19 +25,11 @@ interface Props {
 	searchQuery: string;
 	onSearchQueryChange(event: OnChangeEvent): void;
 	pluginSettings: PluginSettings;
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	onPluginSettingsChange(event: any): void;
-	renderDescription: Function;
 	maxWidth: number;
 	repoApi(): RepositoryApi;
 	disabled: boolean;
-}
-
-function sortManifestResults(results: PluginManifest[]): PluginManifest[] {
-	return results.sort((m1, m2) => {
-		if (m1._recommended && !m2._recommended) return -1;
-		if (!m1._recommended && m2._recommended) return +1;
-		return m1.name.toLowerCase() < m2.name.toLowerCase() ? -1 : +1;
-	});
 }
 
 export default function(props: Props) {
@@ -46,7 +39,10 @@ export default function(props: Props) {
 	const [installingPluginsIds, setInstallingPluginIds] = useState<Record<string, boolean>>({});
 	const [searchResultCount, setSearchResultCount] = useState(null);
 
-	const onInstall = useOnInstallHandler(setInstallingPluginIds, props.pluginSettings, props.repoApi, props.onPluginSettingsChange, false);
+	const pluginSettingsRef = useRef(props.pluginSettings);
+	pluginSettingsRef.current = props.pluginSettings;
+
+	const onInstall = useOnInstallHandler(setInstallingPluginIds, pluginSettingsRef, props.repoApi, props.onPluginSettingsChange, false);
 
 	useEffect(() => {
 		setSearchResultCount(null);
@@ -56,10 +52,11 @@ export default function(props: Props) {
 				setSearchResultCount(null);
 			} else {
 				const r = await props.repoApi().search(props.searchQuery);
-				setManifests(sortManifestResults(r));
+				setManifests(r);
 				setSearchResultCount(r.length);
 			}
 		});
+		// eslint-disable-next-line @seiyab/react-hooks/exhaustive-deps -- Old code before rule was applied
 	}, [props.searchQuery]);
 
 	const onChange = useCallback((event: OnChangeEvent) => {
@@ -70,6 +67,7 @@ export default function(props: Props) {
 	const onSearchButtonClick = useCallback(() => {
 		setSearchStarted(false);
 		props.onSearchQueryChange({ value: '' });
+		// eslint-disable-next-line @seiyab/react-hooks/exhaustive-deps -- Old code before rule was applied
 	}, []);
 
 	function installState(pluginId: string): InstallState {
@@ -82,7 +80,7 @@ export default function(props: Props) {
 	function renderResults(query: string, manifests: PluginManifest[]) {
 		if (query && !manifests.length) {
 			if (searchResultCount === null) return ''; // Search in progress
-			return props.renderDescription(props.themeId, _('No results'));
+			return <SettingDescription text={_('No results')}/>;
 		} else {
 			const output = [];
 
@@ -91,7 +89,7 @@ export default function(props: Props) {
 					key={manifest.id}
 					manifest={manifest}
 					themeId={props.themeId}
-					isCompatible={PluginService.instance().isCompatible(manifest.app_min_version)}
+					isCompatible={PluginService.instance().isCompatible(manifest)}
 					onInstall={onInstall}
 					installState={installState(manifest.id)}
 				/>);

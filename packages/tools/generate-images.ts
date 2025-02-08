@@ -1,7 +1,8 @@
-import * as fs from 'fs-extra';
+import { pathExists, readFile, writeFile, copyFile, readdir } from 'fs-extra';
 import { dirname } from 'path';
 import { execCommand } from './tool-utils';
 import { fileExtension } from '@joplin/lib/path-utils';
+const md5File = require('md5-file');
 const sharp = require('sharp');
 
 interface Source {
@@ -12,10 +13,24 @@ interface Source {
 interface Operation {
 	source: number;
 	dest: string;
+
+	// Name of the destination image - it can be used to reference it from `.images`
+	imageName?: string;
+
+	// The width and height of the generated image
 	width?: number;
 	height?: number;
+
+	// Resize the source image to that dimensions before adding to the final image
 	iconWidth?: number;
 	iconHeight?: number;
+
+	// For images that contain multiple images, such as .ico files
+	images?: string[];
+}
+
+interface Results {
+	done: Record<string, boolean>;
 }
 
 const sources: Source[] = [
@@ -50,6 +65,22 @@ const sources: Source[] = [
 	{
 		id: 8,
 		name: 'WebsiteTopImage.png',
+	},
+	{
+		id: 9,
+		name: 'WebsiteTopImageCn.png',
+	},
+	{
+		id: 10,
+		name: 'JoplinServerIcon.svg',
+	},
+	{
+		id: 11,
+		name: 'JoplinCloudIcon.svg',
+	},
+	{
+		id: 12,
+		name: 'JoplinCloudIcon2.svg',
 	},
 ];
 
@@ -241,6 +272,77 @@ const operations: Operation[] = [
 	},
 
 	// ============================================================================
+	// Linux icons
+	// ============================================================================
+
+	{
+		source: 2,
+		dest: 'Assets/LinuxIcons/16x16.png',
+		width: 16,
+		height: 16,
+	},
+	{
+		source: 3,
+		dest: 'Assets/LinuxIcons/24x24.png',
+		width: 24,
+		height: 24,
+	},
+	{
+		source: 3,
+		dest: 'Assets/LinuxIcons/32x32.png',
+		width: 32,
+		height: 32,
+	},
+	{
+		source: 7,
+		dest: 'Assets/LinuxIcons/48x48.png',
+		width: 48,
+		height: 48,
+	},
+	{
+		source: 7,
+		dest: 'Assets/LinuxIcons/72x72.png',
+		width: 72,
+		height: 72,
+	},
+	{
+		source: 7,
+		dest: 'Assets/LinuxIcons/96x96.png',
+		width: 96,
+		height: 96,
+	},
+	{
+		source: 7,
+		dest: 'Assets/LinuxIcons/128x128.png',
+		width: 128,
+		height: 128,
+	},
+	{
+		source: 7,
+		dest: 'Assets/LinuxIcons/144x144.png',
+		width: 144,
+		height: 144,
+	},
+	{
+		source: 7,
+		dest: 'Assets/LinuxIcons/256x256.png',
+		width: 256,
+		height: 256,
+	},
+	{
+		source: 7,
+		dest: 'Assets/LinuxIcons/512x512.png',
+		width: 512,
+		height: 512,
+	},
+	{
+		source: 7,
+		dest: 'Assets/LinuxIcons/1024x1024.png',
+		width: 1024,
+		height: 1024,
+	},
+
+	// ============================================================================
 	// PortableApps launcher
 	// ============================================================================
 
@@ -332,11 +434,173 @@ const operations: Operation[] = [
 		width: 1205,
 		height: 734,
 	},
+
+	// ============================================================================
+	// Website images CN
+	// ============================================================================
+
+	{
+		source: 9,
+		dest: 'Assets/WebsiteAssets/images/home-top-img-cn-4x.webp',
+		width: 4820,
+		height: 2938,
+	},
+	{
+		source: 9,
+		dest: 'Assets/WebsiteAssets/images/home-top-img-cn-2x.png',
+		width: 2388,
+		height: 1456,
+	},
+	{
+		source: 9,
+		dest: 'Assets/WebsiteAssets/images/home-top-img-cn-2x.webp',
+		width: 2388,
+		height: 1456,
+	},
+	{
+		source: 9,
+		dest: 'Assets/WebsiteAssets/images/home-top-img-cn.png',
+		width: 1205,
+		height: 734,
+	},
+	{
+		source: 9,
+		dest: 'Assets/WebsiteAssets/images/home-top-img-cn.webp',
+		width: 1205,
+		height: 734,
+	},
+
+	// ============================================================================
+	// Joplin Server Icons
+	// ============================================================================
+
+	{
+		source: 10,
+		dest: 'packages/server/public/images/icons/server/icon-512.png',
+		width: 512,
+		height: 512,
+	},
+	{
+		source: 10,
+		dest: 'packages/server/public/images/icons/server/icon-192.png',
+		width: 192,
+		height: 192,
+	},
+	{
+		source: 10,
+		dest: 'packages/server/public/images/icons/server/icon-180.png',
+		width: 180,
+		height: 180,
+	},
+	{
+		source: 10,
+		dest: 'packages/server/public/images/server_logo.png',
+		width: 512,
+		height: 512,
+	},
+	{
+		source: 10,
+		dest: 'packages/server/public/images/icons/server/icon-32.png',
+		width: 32,
+		height: 32,
+		imageName: 'joplinServer32',
+	},
+	{
+		source: 10,
+		dest: 'packages/server/public/images/icons/server/icon.svg',
+	},
+	{
+		source: 10,
+		dest: 'packages/server/public/images/icons/server/favicon.ico',
+		images: ['joplinServer32'],
+	},
+
+	// ============================================================================
+	// Joplin Cloud Icons
+	// ============================================================================
+
+	{
+		source: 11,
+		dest: 'packages/server/public/images/icons/cloud/icon-512.png',
+		width: 512,
+		height: 512,
+	},
+	{
+		source: 11,
+		dest: 'packages/server/public/images/icons/cloud/icon-192.png',
+		width: 192,
+		height: 192,
+	},
+	{
+		source: 11,
+		dest: 'packages/server/public/images/icons/cloud/icon-180.png',
+		width: 180,
+		height: 180,
+	},
+	{
+		source: 11,
+		dest: 'packages/server/public/images/cloud_logo.png',
+		width: 512,
+		height: 512,
+	},
+	{
+		source: 12,
+		dest: 'packages/server/public/images/icons/cloud/icon-32.png',
+		width: 32,
+		height: 32,
+		imageName: 'joplinCloud32',
+	},
+	{
+		source: 12,
+		dest: 'packages/server/public/images/icons/cloud/icon.svg',
+	},
+	{
+		source: 12,
+		dest: 'packages/server/public/images/icons/cloud/favicon.ico',
+		images: ['joplinCloud32'],
+	},
 ];
+
+const md5Dir = async (dirPath: string): Promise<string> => {
+	const files = await readdir(dirPath);
+	files.sort();
+	const output: string[] = [];
+	for (const file of files) {
+		output.push(await md5File(`${dirPath}/${file}`));
+	}
+	return output.join('_');
+};
+
+const readResults = async (filePath: string): Promise<Results> => {
+	if (!(await pathExists(filePath))) return { done: {} };
+	const content = await readFile(filePath, 'utf8');
+	return JSON.parse(content) as Results;
+};
+
+const saveResults = async (filePath: string, results: Results) => {
+	await writeFile(filePath, JSON.stringify(results, null, '\t'), 'utf8');
+};
+
+const makeOperationKey = async (source: Source, sourcePath: string, operation: Operation): Promise<string> => {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+	const output: any[] = [];
+	output.push(source.id);
+	output.push(await md5File(sourcePath));
+	output.push(operation.dest);
+	output.push(operation.width);
+	output.push(operation.height);
+	output.push(operation.iconWidth);
+	output.push(operation.iconHeight);
+	output.push(operation.imageName);
+	output.push(operation.images ? operation.images.join(':') : '');
+	return output.join('_');
+};
 
 async function main() {
 	const rootDir = dirname(dirname(__dirname));
 	const sourceImageDir = `${rootDir}/Assets/ImageSources`;
+	const resultFilePath = `${__dirname}/generate-images.json`;
+	const results: Results = await readResults(resultFilePath);
 
 	for (const operation of operations) {
 		const source = sourceById(operation.source);
@@ -346,6 +610,14 @@ async function main() {
 
 		const sourceExt = fileExtension(sourcePath).toLowerCase();
 		const destExt = fileExtension(destPath).toLowerCase();
+
+		const operationKey = await makeOperationKey(source, sourcePath, operation);
+		if (results.done[operationKey]) {
+			console.info(`Skipping: ${operation.dest} (Already done)`);
+			continue;
+		} else {
+			console.info(`Processing: ${operation.dest}`);
+		}
 
 		if ((operation.width && operation.height) || (sourceExt !== destExt)) {
 			let s = sharp(sourcePath);
@@ -377,24 +649,44 @@ async function main() {
 				s.webp({
 					// quality: 90,
 				});
+			} else if (destExt === 'ico') {
+				const sources: string[] = operations.filter(o => {
+					return operation.images.includes(o.imageName);
+				}).map(o => {
+					return `${rootDir}/${o.dest}`;
+				});
+
+				await execCommand(`convert ${sources.map(s => `'${s}'`).join(' ')} "${operation.dest}"`);
 			} else {
 				throw new Error(`Unsupported extension: ${destExt}`);
 			}
 
 			s = s.toFile(destPath);
 		} else {
-			await fs.copyFile(sourcePath, destPath);
+			await copyFile(sourcePath, destPath);
 		}
+
+		results.done[operationKey] = true;
 	}
 
 	if (process && process.platform === 'darwin') {
 		const icnsDest = `${rootDir}/Assets/macOs.icns`;
 		const icnsSource = `${rootDir}/Assets/macOs.iconset`;
-		console.info(`iconutil -c icns -o "${icnsDest}" "${icnsSource}"`);
-		await execCommand(`iconutil -c icns -o "${icnsDest}" "${icnsSource}"`);
+		const operationKey = ['icns_to_icon_set', await md5Dir(icnsSource)].join('_');
+		if (!results.done[operationKey]) {
+			console.info(`Processing: ${icnsDest}`);
+			console.info(`iconutil -c icns -o "${icnsDest}" "${icnsSource}"`);
+			await execCommand(`iconutil -c icns -o "${icnsDest}" "${icnsSource}"`);
+			results.done[operationKey] = true;
+		} else {
+			console.info(`Skipping: ${icnsDest} (Already done)`);
+		}
 	} else {
 		console.info('If the macOS icon has been updated, this script should be run on macOS too');
 	}
+
+	console.info(`Saving results to ${resultFilePath}`);
+	await saveResults(resultFilePath, results);
 }
 
 main().catch((error) => {

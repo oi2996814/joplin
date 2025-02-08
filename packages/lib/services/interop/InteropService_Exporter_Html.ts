@@ -6,13 +6,21 @@ import Folder from '../../models/Folder';
 import Note from '../../models/Note';
 import Setting from '../../models/Setting';
 import { MarkupToHtml } from '@joplin/renderer';
-import { ResourceEntity } from '../database/types';
+import { NoteEntity, ResourceEntity, ResourceLocalStateEntity } from '../database/types';
 import { contentScriptsToRendererRules } from '../plugins/utils/loadContentScripts';
 import { basename, friendlySafeFilename, rtrimSlashes, dirname } from '../../path-utils';
 import htmlpack from '@joplin/htmlpack';
 const { themeStyle } = require('../../theme');
 const { escapeHtml } = require('../../string-utils.js');
-const { assetsToHeaders } = require('@joplin/renderer');
+import { assetsToHeaders } from '@joplin/renderer';
+import getPluginSettingValue from '../plugins/utils/getPluginSettingValue';
+import { LinkRenderingType } from '@joplin/renderer/MdToHtml';
+import Logger from '@joplin/utils/Logger';
+import { parseRenderedNoteMetadata } from './utils';
+import ResourceLocalState from '../../models/ResourceLocalState';
+import { ResourceInfos } from '@joplin/renderer/types';
+
+const logger = Logger.create('InteropService_Exporter_Html');
 
 export default class InteropService_Exporter_Html extends InteropService_Exporter_Base {
 
@@ -22,11 +30,13 @@ export default class InteropService_Exporter_Html extends InteropService_Exporte
 	private createdDirs_: string[] = [];
 	private resourceDir_: string;
 	private markupToHtml_: MarkupToHtml;
-	private resources_: ResourceEntity[] = [];
+	private resources_: ResourceInfos = {};
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	private style_: any;
-	private packIntoSingleFile_: boolean = false;
+	private packIntoSingleFile_ = false;
 
-	async init(path: string, options: any = {}) {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+	public async init(path: string, options: any = {}) {
 		this.customCss_ = options.customCss ? options.customCss : '';
 
 		if (this.metadata().target === 'file') {
@@ -48,7 +58,7 @@ export default class InteropService_Exporter_Html extends InteropService_Exporte
 		this.style_ = themeStyle(Setting.THEME_LIGHT);
 	}
 
-	async makeDirPath_(item: any, pathPart: string = null) {
+	private async makeDirPath_(item: NoteEntity, pathPart: string = null) {
 		let output = '';
 		while (true) {
 			if (item.type_ === BaseModel.TYPE_FOLDER) {
@@ -64,7 +74,7 @@ export default class InteropService_Exporter_Html extends InteropService_Exporte
 		}
 	}
 
-	async processNoteResources_(item: any) {
+	private async processNoteResources_(item: NoteEntity) {
 		const target = this.metadata().target;
 		const linkedResourceIds = await Note.linkedResourceIds(item.body);
 		const relativePath = target === 'directory' ? rtrimSlashes(await this.makeDirPath_(item, '..')) : '';
@@ -74,6 +84,10 @@ export default class InteropService_Exporter_Html extends InteropService_Exporte
 
 		for (let i = 0; i < linkedResourceIds.length; i++) {
 			const id = linkedResourceIds[i];
+			// Skip the resources which haven't been downloaded yet
+			if (!resourcePaths[id]) {
+				continue;
+			}
 			const resourceContent = `${relativePath ? `${relativePath}/` : ''}_resources/${basename(resourcePaths[id])}`;
 			newBody = newBody.replace(new RegExp(`:/${id}`, 'g'), resourceContent);
 		}
@@ -81,7 +95,8 @@ export default class InteropService_Exporter_Html extends InteropService_Exporte
 		return newBody;
 	}
 
-	async processItem(_itemType: number, item: any) {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+	public async processItem(_itemType: number, item: any) {
 		if ([BaseModel.TYPE_NOTE, BaseModel.TYPE_FOLDER].indexOf(item.type_) < 0) return;
 
 		let dirPath = '';
@@ -107,10 +122,20 @@ export default class InteropService_Exporter_Html extends InteropService_Exporte
 			const bodyMd = await this.processNoteResources_(item);
 			const result = await this.markupToHtml_.render(item.markup_language, bodyMd, this.style_, {
 				resources: this.resources_,
+				settingValue: getPluginSettingValue,
+
 				plainResourceRendering: true,
+				plugins: {
+					link_open: {
+						linkRenderingType: LinkRenderingType.HrefHandler,
+					},
+				},
 			});
+
 			const noteContent = [];
-			if (item.title) noteContent.push(`<div class="exported-note-title">${escapeHtml(item.title)}</div>`);
+			const metadata = parseRenderedNoteMetadata(result.html ? result.html : '');
+			if (!metadata.printTitle) logger.info('Not printing title because joplin-metadata-print-title tag is set to false');
+			if (metadata.printTitle && item.title) noteContent.push(`<div class="exported-note-title">${escapeHtml(item.title)}</div>`);
 			if (result.html) noteContent.push(result.html);
 
 			const libRootPath = dirname(dirname(__dirname));
@@ -120,11 +145,15 @@ export default class InteropService_Exporter_Html extends InteropService_Exporte
 			for (let i = 0; i < result.pluginAssets.length; i++) {
 				const asset = result.pluginAssets[i];
 				const filePath = asset.pathIsAbsolute ? asset.path : `${libRootPath}/node_modules/@joplin/renderer/assets/${asset.name}`;
-				const destPath = `${dirname(noteFilePath)}/pluginAssets/${asset.name}`;
-				const dir = dirname(destPath);
-				await shim.fsDriver().mkdir(dir);
-				this.createdDirs_.push(dir);
-				await shim.fsDriver().copy(filePath, destPath);
+				if (!(await shim.fsDriver().exists(filePath))) {
+					logger.warn(`File does not exist and cannot be exported: ${filePath}`);
+				} else {
+					const destPath = `${dirname(noteFilePath)}/pluginAssets/${asset.name}`;
+					const dir = dirname(destPath);
+					await shim.fsDriver().mkdir(dir);
+					this.createdDirs_.push(dir);
+					await shim.fsDriver().copy(filePath, destPath);
+				}
 			}
 
 			const fullHtml = `
@@ -146,10 +175,15 @@ export default class InteropService_Exporter_Html extends InteropService_Exporte
 		}
 	}
 
-	async processResource(resource: any, filePath: string) {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+	public async processResource(resource: ResourceEntity, filePath: string) {
 		const destResourcePath = `${this.resourceDir_}/${basename(filePath)}`;
 		await shim.fsDriver().copy(filePath, destResourcePath);
-		this.resources_.push(resource);
+		const localState: ResourceLocalStateEntity = await ResourceLocalState.load(resource.id);
+		this.resources_[resource.id] = {
+			localState,
+			item: resource,
+		};
 	}
 
 	public async close() {

@@ -5,13 +5,12 @@ import Note from '../../models/Note';
 import Revision from '../../models/Revision';
 import { loadMasterKeysFromSettings, setupAndEnableEncryption } from '../e2ee/utils';
 
-describe('Synchronizer.revisions', function() {
+describe('Synchronizer.revisions', () => {
 
-	beforeEach(async (done) => {
+	beforeEach(async () => {
 		await setupDatabaseAndSynchronizer(1);
 		await setupDatabaseAndSynchronizer(2);
 		await switchClient(1);
-		done();
 	});
 
 	it('should not save revisions when updating a note via sync', (async () => {
@@ -76,7 +75,7 @@ describe('Synchronizer.revisions', function() {
 		// such revision has already been created on another client (whatever client initially
 		// modified the note), and that rev is going to be synced.
 		//
-		// So in the end we need to make sure that we don't create these unecessary additional revisions.
+		// So in the end we need to make sure that we don't create these unnecessary additional revisions.
 
 		const n1 = await Note.save({ title: 'testing' });
 		await synchronizerStart();
@@ -116,7 +115,7 @@ describe('Synchronizer.revisions', function() {
 		//
 		// In that case, we need to make sure that REV1 and REV2 are both valid and can be retrieved.
 		// Even though REV1 was created before REV2, REV2 is *not* based on REV1. This is not ideal
-		// due to unecessary data being saved, but a possible edge case and we simply need to check
+		// due to unnecessary data being saved, but a possible edge case and we simply need to check
 		// all the data is valid.
 
 		// Note: this test seems to be a bit shaky because it doesn't work if the synchronizer
@@ -182,4 +181,53 @@ describe('Synchronizer.revisions', function() {
 		expect((await Revision.all()).length).toBe(0);
 	}));
 
+	it('should delete old revisions remotely when deleted locally', async () => {
+		Setting.setValue('revisionService.intervalBetweenRevisions', 100);
+		jest.useFakeTimers({ advanceTimers: true });
+
+		const note = await Note.save({ title: 'note' });
+		const getNoteRevisions = () => {
+			return Revision.allByType(BaseModel.TYPE_NOTE, note.id);
+		};
+		jest.advanceTimersByTime(200);
+
+		await Note.save({ id: note.id, title: 'note REV0' });
+		jest.advanceTimersByTime(200);
+
+		await revisionService().collectRevisions(); // REV0
+		expect(await getNoteRevisions()).toHaveLength(1);
+
+		jest.advanceTimersByTime(200);
+
+		await Note.save({ id: note.id, title: 'note REV1' });
+		await revisionService().collectRevisions(); // REV1
+		expect(await getNoteRevisions()).toHaveLength(2);
+
+		// Should sync the revisions
+		await synchronizer().start();
+		await switchClient(2);
+		await synchronizer().start();
+
+		expect(await getNoteRevisions()).toHaveLength(2);
+		await revisionService().deleteOldRevisions(100);
+		expect(await getNoteRevisions()).toHaveLength(0);
+
+		await synchronizer().start();
+		expect(await getNoteRevisions()).toHaveLength(0);
+
+		// Syncing a new client should not download the deleted revisions
+		await setupDatabaseAndSynchronizer(3);
+		await switchClient(3);
+		await synchronizer().start();
+		expect(await getNoteRevisions()).toHaveLength(0);
+
+		// After switching back to the original client, syncing should locally delete
+		// the remotely deleted revisions.
+		await switchClient(1);
+		expect(await getNoteRevisions()).toHaveLength(2);
+		await synchronizer().start();
+		expect(await getNoteRevisions()).toHaveLength(0);
+
+		jest.useRealTimers();
+	});
 });

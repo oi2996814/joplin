@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import JoplinServerApi from '@joplin/lib/JoplinServerApi';
 import { _, _n } from '@joplin/lib/locale';
 import Note from '@joplin/lib/models/Note';
@@ -15,17 +15,21 @@ import Button from './Button/Button';
 import { connect } from 'react-redux';
 import { AppState } from '../app.reducer';
 import { getEncryptionEnabled } from '@joplin/lib/services/synchronizer/syncInfoUtils';
+import SyncTargetRegistry from '@joplin/lib/SyncTargetRegistry';
+import shim from '@joplin/lib/shim';
 const { clipboard } = require('electron');
 
 interface Props {
 	themeId: number;
-	noteIds: Array<string>;
+	noteIds: string[];
+	// eslint-disable-next-line @typescript-eslint/ban-types -- Old code before rule was applied
 	onClose: Function;
 	shares: StateShare[];
+	syncTargetId: number;
 }
 
 function styles_(props: Props) {
-	return buildStyle('ShareNoteDialog', props.themeId, (theme: any) => {
+	return buildStyle('ShareNoteDialog', props.themeId, theme => {
 		return {
 			root: {
 				minWidth: 500,
@@ -66,12 +70,11 @@ function styles_(props: Props) {
 }
 
 export function ShareNoteDialog(props: Props) {
-	console.info('Render ShareNoteDialog');
-
 	const [notes, setNotes] = useState<NoteEntity[]>([]);
+	const [recursiveShare, setRecursiveShare] = useState<boolean>(false);
 	const [sharesState, setSharesState] = useState<string>('unknown');
-	// const [shares, setShares] = useState<SharesMap>({});
 
+	const syncTargetInfo = useMemo(() => SyncTargetRegistry.infoById(props.syncTargetId), [props.syncTargetId]);
 	const noteCount = notes.length;
 	const theme = themeStyle(props.themeId);
 	const styles = styles_(props);
@@ -102,7 +105,7 @@ export function ShareNoteDialog(props: Props) {
 		clipboard.writeText(links.join('\n'));
 	};
 
-	const shareLinkButton_click = async () => {
+	const shareLinkButton_click = useCallback(async () => {
 		const service = ShareService.instance();
 
 		let hasSynced = false;
@@ -121,7 +124,7 @@ export function ShareNoteDialog(props: Props) {
 				const newShares: StateShare[] = [];
 
 				for (const note of notes) {
-					const share = await service.shareNote(note.id);
+					const share = await service.shareNote(note.id, recursiveShare);
 					newShares.push(share);
 				}
 
@@ -144,23 +147,14 @@ export function ShareNoteDialog(props: Props) {
 				reg.logger().error('ShareNoteDialog: Cannot publish note:', error);
 
 				setSharesState('idle');
-				alert(JoplinServerApi.connectionErrorMessage(error));
+				void shim.showErrorDialog(JoplinServerApi.connectionErrorMessage(error));
 			}
 
 			break;
 		}
-	};
+	}, [recursiveShare, notes]);
 
-	// const removeNoteButton_click = (event: any) => {
-	// 	const newNotes = [];
-	// 	for (let i = 0; i < notes.length; i++) {
-	// 		const n = notes[i];
-	// 		if (n.id === event.noteId) continue;
-	// 		newNotes.push(n);
-	// 	}
-	// 	setNotes(newNotes);
-	// };
-
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	const unshareNoteButton_click = async (event: any) => {
 		await ShareService.instance().unshareNote(event.noteId);
 		await ShareService.instance().refreshShares();
@@ -171,22 +165,6 @@ export function ShareNoteDialog(props: Props) {
 			<Button tooltip={_('Unpublish note')} iconName="fas fa-share-alt" onClick={() => unshareNoteButton_click({ noteId: note.id })}/>
 		);
 
-		// const removeButton = notes.length <= 1 ? null : (
-		// 	<Button iconName="fa fa-times" onClick={() => removeNoteButton_click({ noteId: note.id })}/>
-		// );
-
-		// const unshareButton = !shares[note.id] ? null : (
-		// 	<button onClick={() => unshareNoteButton_click({ noteId: note.id })} style={styles.noteRemoveButton}>
-		// 		<i style={styles.noteRemoveButtonIcon} className={'fas fa-share-alt'}></i>
-		// 	</button>
-		// );
-
-		// const removeButton = notes.length <= 1 ? null : (
-		// 	<button onClick={() => removeNoteButton_click({ noteId: note.id })} style={styles.noteRemoveButton}>
-		// 		<i style={styles.noteRemoveButtonIcon} className={'fa fa-times'}></i>
-		// 	</button>
-		// );
-
 		return (
 			<div key={note.id} style={styles.note}>
 				<span style={styles.noteTitle}>{note.title}</span>{unshareButton}
@@ -194,6 +172,7 @@ export function ShareNoteDialog(props: Props) {
 		);
 	};
 
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	const renderNoteList = (notes: any) => {
 		const noteComps = [];
 		for (const note of notes) {
@@ -214,11 +193,26 @@ export function ShareNoteDialog(props: Props) {
 		return <div style={theme.textStyle}>{_('Note: When a note is shared, it will no longer be encrypted on the server.')}<hr/></div>;
 	}
 
-	function renderContent() {
+	const onRecursiveShareChange = useCallback(() => {
+		setRecursiveShare(v => !v);
+	}, []);
+
+	const renderRecursiveShareCheckbox = () => {
+		if (!syncTargetInfo.supportsRecursiveLinkedNotes) return null;
+
 		return (
-			<div style={styles.root}>
+			<div className="form-input-group form-input-group-checkbox">
+				<input id="recursiveShare" name="recursiveShare" type="checkbox" checked={!!recursiveShare} onChange={onRecursiveShareChange} /> <label htmlFor="recursiveShare">{_('Also publish linked notes')}</label>
+			</div>
+		);
+	};
+
+	const renderContent = () => {
+		return (
+			<div style={styles.root} className="form">
 				<DialogTitle title={_('Publish Notes')}/>
 				{renderNoteList(notes)}
+				{renderRecursiveShareCheckbox()}
 				<button disabled={['creating', 'synchronizing'].indexOf(sharesState) >= 0} style={styles.copyShareLinkButton} onClick={shareLinkButton_click}>{_n('Copy Shareable Link', 'Copy Shareable Links', noteCount)}</button>
 				<div style={theme.textStyle}>{statusMessage(sharesState)}</div>
 				{renderEncryptionWarningMessage()}
@@ -230,17 +224,18 @@ export function ShareNoteDialog(props: Props) {
 				/>
 			</div>
 		);
-	}
+	};
 
 	return (
-		<Dialog renderContent={renderContent}/>
+		<Dialog>{renderContent()}</Dialog>
 	);
 }
 
 const mapStateToProps = (state: AppState) => {
 	return {
 		shares: state.shareService.shares.filter(s => !!s.note_id),
+		syncTargetId: state.settings['sync.target'],
 	};
 };
 
-export default connect(mapStateToProps)(ShareNoteDialog as any);
+export default connect(mapStateToProps)(ShareNoteDialog);

@@ -1,9 +1,10 @@
 import markdownUtils from './markdownUtils';
 import { ResourceEntity } from './services/database/types';
+import { htmlentities } from '@joplin/utils/html';
 const stringPadding = require('string-padding');
 const stringToStream = require('string-to-stream');
 const resourceUtils = require('./resourceUtils.js');
-const cssParser = require('css');
+const cssParser = require('@adobe/css-tools');
 
 const BLOCK_OPEN = '[[BLOCK_OPEN]]';
 const BLOCK_CLOSE = '[[BLOCK_CLOSE]]';
@@ -24,6 +25,7 @@ enum SectionType {
 interface Section {
 	type: SectionType;
 	parent: Section;
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	lines: any[];
 	isHeader?: boolean;
 }
@@ -35,8 +37,15 @@ interface ParserStateTag {
 	isHighlight: boolean;
 }
 
+enum ListTag {
+	Ul = 'ul',
+	Ol = 'ol',
+	CheckboxList = 'checkboxList',
+	TaskList = 'taskList',
+}
+
 interface ParserStateList {
-	tag: string;
+	tag: ListTag;
 	counter: number;
 	startedText: boolean;
 }
@@ -46,10 +55,18 @@ interface ParserState {
 	inPre: boolean;
 	inQuote: boolean;
 	lists: ParserStateList[];
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	anchorAttributes: any[];
 	spanAttributes: string[];
 	tags: ParserStateTag[];
 	currentCode?: string;
+}
+
+
+interface ExtractedTask {
+	title: string;
+	completed: boolean;
+	groupId: string;
 }
 
 interface EnexXmlToMdArrayResult {
@@ -58,11 +75,11 @@ interface EnexXmlToMdArrayResult {
 }
 
 function processMdArrayNewLines(md: string[]): string {
-	while (md.length && md[0] == BLOCK_OPEN) {
+	while (md.length && md[0] === BLOCK_OPEN) {
 		md.shift();
 	}
 
-	while (md.length && md[md.length - 1] == BLOCK_CLOSE) {
+	while (md.length && md[md.length - 1] === BLOCK_CLOSE) {
 		md.pop();
 	}
 
@@ -70,7 +87,7 @@ function processMdArrayNewLines(md: string[]): string {
 	let last = '';
 	for (let i = 0; i < md.length; i++) {
 		const v = md[i];
-		if (isNewLineBlock(last) && isNewLineBlock(v) && last == v) {
+		if (isNewLineBlock(last) && isNewLineBlock(v) && last === v) {
 			// Skip it
 		} else {
 			temp.push(v);
@@ -83,7 +100,7 @@ function processMdArrayNewLines(md: string[]): string {
 	last = '';
 	for (let i = 0; i < md.length; i++) {
 		const v = md[i];
-		if (last == BLOCK_CLOSE && v == BLOCK_OPEN) {
+		if (last === BLOCK_CLOSE && v === BLOCK_OPEN) {
 			temp.pop();
 			temp.push(NEWLINE_MERGED);
 		} else {
@@ -97,7 +114,7 @@ function processMdArrayNewLines(md: string[]): string {
 	last = '';
 	for (let i = 0; i < md.length; i++) {
 		const v = md[i];
-		if (last == NEWLINE && (v == NEWLINE_MERGED || v == BLOCK_CLOSE)) {
+		if (last === NEWLINE && (v === NEWLINE_MERGED || v === BLOCK_CLOSE)) {
 			// Skip it
 		} else {
 			temp.push(v);
@@ -111,7 +128,7 @@ function processMdArrayNewLines(md: string[]): string {
 	last = '';
 	for (let i = 0; i < md.length; i++) {
 		const v = md[i];
-		if (last == NEWLINE && (v == NEWLINE_MERGED || v == BLOCK_OPEN)) {
+		if (last === NEWLINE && (v === NEWLINE_MERGED || v === BLOCK_OPEN)) {
 			// Skip it
 		} else {
 			temp.push(v);
@@ -121,7 +138,7 @@ function processMdArrayNewLines(md: string[]): string {
 	md = temp;
 
 	if (md.length > 2) {
-		if (md[md.length - 2] == NEWLINE_MERGED && md[md.length - 1] == NEWLINE) {
+		if (md[md.length - 2] === NEWLINE_MERGED && md[md.length - 1] === NEWLINE) {
 			md.pop();
 		}
 	}
@@ -132,10 +149,10 @@ function processMdArrayNewLines(md: string[]): string {
 	for (let i = 0; i < md.length; i++) {
 		const v = md[i];
 		let add = '';
-		if (v == BLOCK_CLOSE || v == BLOCK_OPEN || v == NEWLINE || v == NEWLINE_MERGED) {
+		if (v === BLOCK_CLOSE || v === BLOCK_OPEN || v === NEWLINE || v === NEWLINE_MERGED) {
 			add = '\n';
-		} else if (v == SPACE) {
-			if (previous == SPACE || previous == '\n' || start) {
+		} else if (v === SPACE) {
+			if (previous === SPACE || previous === '\n' || start) {
 				continue; // skip
 			} else {
 				add = ' ';
@@ -285,11 +302,11 @@ function formatMdLayout(lines: string[]) {
 }
 
 function isWhiteSpace(c: string): boolean {
-	return c == '\n' || c == '\r' || c == '\v' || c == '\f' || c == '\t' || c == ' ';
+	return c === '\n' || c === '\r' || c === '\v' || c === '\f' || c === '\t' || c === ' ';
 }
 
-// Like QString::simpified(), except that it preserves non-breaking spaces (which
-// Evernote uses for identation, etc.)
+// Like QString::simplified(), except that it preserves non-breaking spaces (which
+// Evernote uses for indentation, etc.)
 function simplifyString(s: string): string {
 	let output = '';
 	let previousWhite = false;
@@ -310,21 +327,22 @@ function simplifyString(s: string): string {
 	return output;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 function collapseWhiteSpaceAndAppend(lines: string[], state: any, text: string) {
 	if (state.inCode.length) {
 		lines.push(text);
 	} else {
 		// Remove all \n and \r from the left and right of the text
-		while (text.length && (text[0] == '\n' || text[0] == '\r')) text = text.substr(1);
-		while (text.length && (text[text.length - 1] == '\n' || text[text.length - 1] == '\r')) text = text.substr(0, text.length - 1);
+		while (text.length && (text[0] === '\n' || text[0] === '\r')) text = text.substr(1);
+		while (text.length && (text[text.length - 1] === '\n' || text[text.length - 1] === '\r')) text = text.substr(0, text.length - 1);
 
 		// Collapse all white spaces to just one. If there are spaces to the left and right of the string
 		// also collapse them to just one space.
-		const spaceLeft = text.length && text[0] == ' ';
-		const spaceRight = text.length && text[text.length - 1] == ' ';
+		const spaceLeft = text.length && text[0] === ' ';
+		const spaceRight = text.length && text[text.length - 1] === ' ';
 		text = simplifyString(text);
 
-		if (!spaceLeft && !spaceRight && text == '') return lines;
+		if (!spaceLeft && !spaceRight && text === '') return lines;
 
 		if (state.inQuote) {
 			// Add a ">" at the beginning of the block then at the beginning of each lines. So it turns this:
@@ -354,45 +372,68 @@ function tagAttributeToMdText(attr: string): string {
 	return attr;
 }
 
-function addResourceTag(lines: string[], resource: ResourceEntity, alt: string = ''): string[] {
-	// Note: refactor to use Resource.markdownTag
 
-	if (!alt) alt = resource.title;
-	if (!alt) alt = resource.filename;
-	if (!alt) alt = '';
+interface AddResourceOptions {
+	alt?: string;
+	width?: number;
+	height?: number;
+}
 
-	alt = tagAttributeToMdText(alt);
-	if (resourceUtils.isImageMimeType(resource.mime)) {
-		lines.push('![');
-		lines.push(alt);
-		lines.push(`](:/${resource.id})`);
+const addResourceTag = (lines: string[], src: string, mime: string, options: AddResourceOptions): string[] => {
+	const alt = options.alt ? tagAttributeToMdText(options.alt) : '';
+
+	if (resourceUtils.isImageMimeType(mime)) {
+		if (!!options.width || !!options.height) {
+			const attrs: Record<string, string> = { src };
+			if (options.width) attrs.width = options.width.toString();
+			if (options.height) attrs.height = options.height.toString();
+			if (alt) attrs.alt = alt;
+
+			const attrsHtml: string[] = [];
+			for (const [key, value] of Object.entries(attrs)) {
+				attrsHtml.push(`${key}="${htmlentities(value)}"`);
+			}
+
+			lines.push(`<img ${attrsHtml.join(' ')}/>`);
+		} else {
+			lines.push('![');
+			lines.push(alt);
+			lines.push(`](${markdownUtils.escapeLinkUrl(src)})`);
+		}
 	} else {
 		lines.push('[');
 		lines.push(alt);
-		lines.push(`](:/${resource.id})`);
+		lines.push(`](${markdownUtils.escapeLinkUrl(src)})`);
 	}
 
 	return lines;
-}
+};
+
+const altFromResource = (resource: ResourceEntity): string => {
+	let alt = '';
+	if (!alt) alt = resource.title;
+	if (!alt) alt = resource.filename;
+	return alt;
+};
 
 function isBlockTag(n: string) {
 	return ['div', 'p', 'dl', 'dd', 'dt', 'center', 'address'].indexOf(n) >= 0;
 }
 
 function isStrongTag(n: string) {
-	return n == 'strong' || n == 'b' || n == 'big';
+	return n === 'strong' || n === 'b' || n === 'big';
 }
 
 function isStrikeTag(n: string) {
-	return n == 'strike' || n == 's' || n == 'del';
+	return n === 'strike' || n === 's' || n === 'del';
 }
 
 function isEmTag(n: string) {
-	return n == 'em' || n == 'i' || n == 'u';
+	return n === 'em' || n === 'i' || n === 'u';
 }
 
 function isAnchor(n: string) {
-	return n == 'a';
+	return n === 'a';
 }
 
 function isIgnoredEndTag(n: string) {
@@ -400,7 +441,7 @@ function isIgnoredEndTag(n: string) {
 }
 
 function isListTag(n: string) {
-	return n == 'ol' || n == 'ul';
+	return n === 'ol' || n === 'ul';
 }
 
 // Elements that don't require any special treatment beside adding a newline character
@@ -413,11 +454,13 @@ function isInlineCodeTag(n: string) {
 }
 
 function isNewLineBlock(s: string) {
-	return s == BLOCK_OPEN || s == BLOCK_CLOSE;
+	return s === BLOCK_OPEN || s === BLOCK_CLOSE;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 function attributeToLowerCase(node: any) {
 	if (!node.attributes) return {};
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	const output: any = {};
 	for (const n in node.attributes) {
 		if (!node.attributes.hasOwnProperty(n)) continue;
@@ -426,6 +469,7 @@ function attributeToLowerCase(node: any) {
 	return output;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 function cssValue(context: any, style: string, propName: string | string[]): string {
 	if (!style) return null;
 
@@ -436,17 +480,19 @@ function cssValue(context: any, style: string, propName: string | string[]): str
 		if (!o.stylesheet.rules.length) return null;
 
 		for (const propName of propNames) {
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 			const prop = o.stylesheet.rules[0].declarations.find((d: any) => d.property.toLowerCase() === propName);
 			if (prop && prop.value) return prop.value.trim().toLowerCase();
 		}
 
 		return null;
 	} catch (error) {
-		displaySaxWarning(context, error.message);
+		displaySaxWarning(context, `Invalid CSS value: ${error.message}`);
 		return null;
 	}
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 function isInvisibleBlock(context: any, attributes: any) {
 	const display = cssValue(context, attributes.style, 'display');
 	return display && display.indexOf('none') === 0;
@@ -466,8 +512,9 @@ function trimBlockOpenAndClose(lines: string[]): string[] {
 	return output;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 function isSpanWithStyle(attributes: any) {
-	if (attributes != undefined) {
+	if (attributes) {
 		if ('style' in attributes) {
 			return true;
 		} else {
@@ -477,6 +524,7 @@ function isSpanWithStyle(attributes: any) {
 	return false;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 function isSpanStyleBold(attributes: any) {
 	let style = attributes.style;
 	if (!style) return false;
@@ -484,19 +532,21 @@ function isSpanStyleBold(attributes: any) {
 	style = style.replace(/\s+/g, '');
 	if (style.includes('font-weight:bold') || style.includes('font-weight:700') || style.includes('font-weight:800') || style.includes('font-weight:900')) {
 		return true;
-	} else if (style.search(/font-family:.*,Bold.*;/) != -1) {
+	} else if (style.search(/font-family:.*,Bold.*;/) !== -1) {
 		return true;
 	} else {
 		return false;
 	}
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 function isSpanStyleItalic(attributes: any) {
 	let style = attributes.style;
 	style = style.replace(/\s+/g, '');
 	return (style.toLowerCase().includes('font-style:italic'));
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 function displaySaxWarning(context: any, message: string) {
 	const line = [];
 	const parser = context ? context._parser : null;
@@ -507,6 +557,7 @@ function displaySaxWarning(context: any, message: string) {
 	console.warn(line.join(': '));
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 function isCodeBlock(context: any, nodeName: string, attributes: any) {
 	if (nodeName === 'code') return true;
 
@@ -526,6 +577,7 @@ function isCodeBlock(context: any, nodeName: string, attributes: any) {
 	return false;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 function isHighlight(context: any, _nodeName: string, attributes: any) {
 	if (attributes && attributes.style) {
 		// Evernote uses various inconsistent CSS prefixes: so far I've found
@@ -548,7 +600,8 @@ function isHighlight(context: any, _nodeName: string, attributes: any) {
 	return false;
 }
 
-function enexXmlToMdArray(stream: any, resources: ResourceEntity[]): Promise<EnexXmlToMdArrayResult> {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+function enexXmlToMdArray(stream: any, resources: ResourceEntity[], tasks: ExtractedTask[]): Promise<EnexXmlToMdArrayResult> {
 	const remainingResources = resources.slice();
 
 	const removeRemainingResource = (id: string) => {
@@ -581,7 +634,8 @@ function enexXmlToMdArray(stream: any, resources: ResourceEntity[]): Promise<Ene
 			parent: null,
 		};
 
-		saxStream.on('error', function(e: any) {
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+		saxStream.on('error', (e: any) => {
 			console.warn(e);
 		});
 
@@ -609,13 +663,20 @@ function enexXmlToMdArray(stream: any, resources: ResourceEntity[]): Promise<Ene
 			return output;
 		};
 
-		saxStream.on('text', function(text: string) {
+		saxStream.on('text', (text: string) => {
 			if (['table', 'tr', 'tbody'].indexOf(section.type) >= 0) return;
+
+			const currentList = state.lists && state.lists.length ? state.lists[state.lists.length - 1] : null;
+			if ((currentList) && (currentList.tag === ListTag.TaskList)) {
+				// skip text on task lists
+				return;
+			}
 
 			text = !state.inPre ? unwrapInnerText(text) : text;
 			section.lines = collapseWhiteSpaceAndAppend(section.lines, state, text);
 		});
 
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 		saxStream.on('opentag', function(node: any) {
 			const nodeAttributes = attributeToLowerCase(node);
 			const n = node.name.toLowerCase();
@@ -647,9 +708,9 @@ function enexXmlToMdArray(stream: any, resources: ResourceEntity[]): Promise<Ene
 			// handled as table-related. This is to ensure that the table
 			// structure is valid.
 
-			if (n == 'en-note') {
+			if (n === 'en-note') {
 				// Start of note
-			} else if (n == 'table') {
+			} else if (n === 'table') {
 				const newSection: Section = {
 					type: SectionType.Table,
 					lines: [],
@@ -657,9 +718,9 @@ function enexXmlToMdArray(stream: any, resources: ResourceEntity[]): Promise<Ene
 				};
 				section.lines.push(newSection);
 				section = newSection;
-			} else if (n == 'tbody' || n == 'thead') {
+			} else if (n === 'tbody' || n === 'thead') {
 				// Ignore it
-			} else if (n == 'tr') {
+			} else if (n === 'tr') {
 				// Note: Even if we encounter tags in the wrong place, we
 				// create the sections anyway so that the data is imported.
 				// Invalid HTML like would most likely be from clipped
@@ -671,7 +732,7 @@ function enexXmlToMdArray(stream: any, resources: ResourceEntity[]): Promise<Ene
 				// error in drawTable() later on.
 				//
 				// https://discourse.joplinapp.org/t/not-all-notes-imported-from-evernote/13056/12?u=laurent
-				if (section.type != 'table') {
+				if (section.type !== 'table') {
 					displaySaxWarning(this, 'Found a <tr> tag outside of a table');
 					// return;
 				}
@@ -685,13 +746,13 @@ function enexXmlToMdArray(stream: any, resources: ResourceEntity[]): Promise<Ene
 
 				section.lines.push(newSection);
 				section = newSection;
-			} else if (n == 'td' || n == 'th') {
-				if (section.type != 'tr') {
+			} else if (n === 'td' || n === 'th') {
+				if (section.type !== 'tr') {
 					displaySaxWarning(this, 'Found a <td> tag outside of a <tr>');
 					// return;
 				}
 
-				if (n == 'th') section.isHeader = true;
+				if (n === 'th') section.isHeader = true;
 
 				const newSection: Section = {
 					type: SectionType.Td,
@@ -701,8 +762,8 @@ function enexXmlToMdArray(stream: any, resources: ResourceEntity[]): Promise<Ene
 
 				section.lines.push(newSection);
 				section = newSection;
-			} else if (n == 'caption') {
-				if (section.type != 'table') {
+			} else if (n === 'caption') {
+				if (section.type !== 'table') {
 					displaySaxWarning(this, 'Found a <caption> tag outside of a <table>');
 				}
 
@@ -735,11 +796,26 @@ function enexXmlToMdArray(stream: any, resources: ResourceEntity[]): Promise<Ene
 				section.lines.push(newSection);
 				section = newSection;
 			} else if (isBlockTag(n)) {
-				section.lines.push(BLOCK_OPEN);
+				const isTodosList = cssValue(this, nodeAttributes.style, '--en-task-group') === 'true';
+				if (isTodosList) {
+					const todoGroup = cssValue(this, nodeAttributes.style, '--en-id');
+					section.lines.push(BLOCK_OPEN);
+					for (const t of tasks) {
+						if (t.groupId === todoGroup) {
+							section.lines.push(`- [${t.completed ? 'x' : ' '}] ${t.title}\n`);
+						}
+					}
+					tagInfo.name = ListTag.TaskList;
+					state.lists.push({ tag: ListTag.TaskList, counter: 1, startedText: false });
+				} else {
+					section.lines.push(BLOCK_OPEN);
+				}
 			} else if (isListTag(n)) {
 				section.lines.push(BLOCK_OPEN);
-				state.lists.push({ tag: n, counter: 1, startedText: false });
-			} else if (n == 'li') {
+				const isCheckboxList = cssValue(this, nodeAttributes.style, '--en-todo') === 'true';
+				const tag = isCheckboxList ? ListTag.CheckboxList : n as ListTag;
+				state.lists.push({ tag: tag, counter: 1, startedText: false });
+			} else if (n === 'li') {
 				section.lines.push(BLOCK_OPEN);
 				if (!state.lists.length) {
 					displaySaxWarning(this, 'Found <li> tag without being inside a list');
@@ -750,7 +826,11 @@ function enexXmlToMdArray(stream: any, resources: ResourceEntity[]): Promise<Ene
 				container.startedText = false;
 
 				const indent = '    '.repeat(state.lists.length - 1);
-				if (container.tag == 'ul') {
+
+				if (container.tag === ListTag.CheckboxList) {
+					const x = cssValue(this, nodeAttributes.style, '--en-checked') === 'true' ? 'X' : ' ';
+					section.lines.push(`${indent}- [${x}] `);
+				} else if (container.tag === ListTag.Ul) {
 					section.lines.push(`${indent}- `);
 				} else {
 					section.lines.push(`${indent + container.counter}. `);
@@ -764,15 +844,17 @@ function enexXmlToMdArray(stream: any, resources: ResourceEntity[]): Promise<Ene
 				section.lines.push('<s>');
 			} else if (isInlineCodeTag(n)) {
 				section.lines.push('`');
-			} else if (n == 'q') {
+			} else if (n === 'q') {
 				section.lines.push('"');
-			} else if (n == 'img') {
+			} else if (n === 'img') {
+				// Many (most?) img tags don't have no source associated,
+				// especially when they were imported from HTML
 				if (nodeAttributes.src) {
-					// Many (most?) img tags don't have no source associated, especially when they were imported from HTML
-					let s = '![';
-					if (nodeAttributes.alt) s += tagAttributeToMdText(nodeAttributes.alt);
-					s += `](${markdownUtils.escapeLinkUrl(nodeAttributes.src)})`;
-					section.lines.push(s);
+					section.lines = addResourceTag(section.lines, nodeAttributes.src, 'image/png', {
+						width: nodeAttributes.width ? Number(nodeAttributes.width) : 0,
+						height: nodeAttributes.height ? Number(nodeAttributes.height) : 0,
+						alt: nodeAttributes.alt ? nodeAttributes.alt : '',
+					});
 				}
 			} else if (isAnchor(n)) {
 				state.anchorAttributes.push(nodeAttributes);
@@ -781,48 +863,48 @@ function enexXmlToMdArray(stream: any, resources: ResourceEntity[]): Promise<Ene
 				collapseWhiteSpaceAndAppend(section.lines, state, '[');
 			} else if (isEmTag(n)) {
 				section.lines.push('*');
-			} else if (n == 'en-todo') {
-				const x = nodeAttributes && nodeAttributes.checked && nodeAttributes.checked.toLowerCase() == 'true' ? 'X' : ' ';
+			} else if (n === 'en-todo') {
+				const x = nodeAttributes.checked && nodeAttributes.checked.toLowerCase() === 'true' ? 'X' : ' ';
 				section.lines.push(`- [${x}] `);
-			} else if (n == 'hr') {
+			} else if (n === 'hr') {
 				// Needs to be surrounded by new lines so that it's properly rendered as a line when converting to HTML
 				section.lines.push(NEWLINE);
 				section.lines.push('* * *');
 				section.lines.push(NEWLINE);
 				section.lines.push(NEWLINE);
-			} else if (n == 'h1') {
+			} else if (n === 'h1') {
 				section.lines.push(BLOCK_OPEN);
 				section.lines.push('# ');
-			} else if (n == 'h2') {
+			} else if (n === 'h2') {
 				section.lines.push(BLOCK_OPEN);
 				section.lines.push('## ');
-			} else if (n == 'h3') {
+			} else if (n === 'h3') {
 				section.lines.push(BLOCK_OPEN);
 				section.lines.push('### ');
-			} else if (n == 'h4') {
+			} else if (n === 'h4') {
 				section.lines.push(BLOCK_OPEN);
 				section.lines.push('#### ');
-			} else if (n == 'h5') {
+			} else if (n === 'h5') {
 				section.lines.push(BLOCK_OPEN);
 				section.lines.push('##### ');
-			} else if (n == 'h6') {
+			} else if (n === 'h6') {
 				section.lines.push(BLOCK_OPEN);
 				section.lines.push('###### ');
-			} else if (n == 'blockquote') {
+			} else if (n === 'blockquote') {
 				section.lines.push(BLOCK_OPEN);
 				state.inQuote = true;
 			} else if (n === 'pre') {
 				section.lines.push(BLOCK_OPEN);
 				state.inPre = true;
-			} else if (n == 'br') {
+			} else if (n === 'br') {
 				section.lines.push(NEWLINE);
-			} else if (n == 'en-media') {
+			} else if (n === 'en-media') {
 				const hash = nodeAttributes.hash;
 
 				let resource = null;
 				for (let i = 0; i < resources.length; i++) {
 					const r = resources[i];
-					if (r.id == hash) {
+					if (r.id === hash) {
 						resource = r;
 						removeRemainingResource(r.id);
 						break;
@@ -840,7 +922,7 @@ function enexXmlToMdArray(stream: any, resources: ResourceEntity[]): Promise<Ene
 					//	<!DOCTYPE en-export SYSTEM "http://xml.evernote.com/pub/evernote-export2.dtd">
 					//	<en-export export-date="20161221T203133Z" application="Evernote/Windows" version="6.x">
 					//		<note>
-					//			<title>Commande</title>
+					//			<title>Command</title>
 					//			<content>
 					//				<![CDATA[
 					//					<?xml version="1.0" encoding="UTF-8"?>
@@ -872,7 +954,7 @@ function enexXmlToMdArray(stream: any, resources: ResourceEntity[]): Promise<Ene
 					for (let i = 0; i < remainingResources.length; i++) {
 						const r = remainingResources[i];
 						if (!r.id) {
-							resource = Object.assign({}, r);
+							resource = { ...r };
 							resource.id = hash;
 							remainingResources.splice(i, 1);
 							found = true;
@@ -886,12 +968,16 @@ function enexXmlToMdArray(stream: any, resources: ResourceEntity[]): Promise<Ene
 				}
 
 				// If the resource does not appear among the note's resources, it
-				// means it's an attachement. It will be appended along with the
+				// means it's an attachment. It will be appended along with the
 				// other remaining resources at the bottom of the markdown text.
 				if (resource && !!resource.id) {
-					section.lines = addResourceTag(section.lines, resource, nodeAttributes.alt);
+					section.lines = addResourceTag(section.lines, `:/${resource.id}`, resource.mime, {
+						alt: nodeAttributes.alt ? nodeAttributes.alt : altFromResource(resource),
+						width: nodeAttributes.width ? Number(nodeAttributes.width) : 0,
+						height: nodeAttributes.height ? Number(nodeAttributes.height) : 0,
+					});
 				}
-			} else if (n == 'span') {
+			} else if (n === 'span') {
 				if (isSpanWithStyle(nodeAttributes)) {
 					// Found style(s) in span tag
 					state.spanAttributes.push(nodeAttributes);
@@ -911,12 +997,12 @@ function enexXmlToMdArray(stream: any, resources: ResourceEntity[]): Promise<Ene
 			}
 		});
 
-		saxStream.on('closetag', function(n: string) {
+		saxStream.on('closetag', (n: string) => {
 			n = n ? n.toLowerCase() : n;
 
 			const poppedTag = state.tags.pop();
 
-			if (n == 'en-note') {
+			if (n === 'en-note') {
 				// End of note
 			} else if (!poppedTag.visible) {
 				if (section && section.parent) section = section.parent;
@@ -945,12 +1031,15 @@ function enexXmlToMdArray(stream: any, resources: ResourceEntity[]): Promise<Ene
 					if (section && section.parent) section = section.parent;
 				}
 			} else if (isNewLineOnlyEndTag(n)) {
+				if (poppedTag.name === ListTag.TaskList) {
+					state.lists.pop();
+				}
 				section.lines.push(BLOCK_CLOSE);
-			} else if (n == 'td' || n == 'th') {
+			} else if (n === 'td' || n === 'th') {
 				if (section && section.parent) section = section.parent;
-			} else if (n == 'tr' || n == 'caption') {
+			} else if (n === 'tr' || n === 'caption') {
 				if (section && section.parent) section = section.parent;
-			} else if (n == 'table') {
+			} else if (n === 'table') {
 				if (section && section.parent) section = section.parent;
 			} else if (isIgnoredEndTag(n)) {
 				// Skip
@@ -965,9 +1054,9 @@ function enexXmlToMdArray(stream: any, resources: ResourceEntity[]): Promise<Ene
 				section.lines.push('`');
 			} else if (isEmTag(n)) {
 				section.lines.push('*');
-			} else if (n == 'q') {
+			} else if (n === 'q') {
 				section.lines.push('"');
-			} else if (n == 'blockquote') {
+			} else if (n === 'blockquote') {
 				section.lines.push(BLOCK_OPEN);
 				state.inQuote = false;
 			} else if (n === 'pre') {
@@ -995,7 +1084,7 @@ function enexXmlToMdArray(stream: any, resources: ResourceEntity[]): Promise<Ene
 					}
 				}
 
-				if (previous == '[') {
+				if (previous === '[') {
 					// We have a link that had some content but, after parsing, nothing is left. The content was most likely
 					// something that shows up via CSS and which we cannot support. For example:
 					//
@@ -1008,7 +1097,7 @@ function enexXmlToMdArray(stream: any, resources: ResourceEntity[]): Promise<Ene
 					// it's interactive bits) and it's not user-generated content such as a URL that would appear in a comment.
 					// So in this case, we still want to preserve the information but display it in a discreet way as a simple [L].
 
-					// Need to pop everything inside the current [] because it can only be special chars that we don't want (they would create uncessary newlines)
+					// Need to pop everything inside the current [] because it can only be special chars that we don't want (they would create unnecessary newlines)
 					for (let i = section.lines.length - 1; i >= 0; i--) {
 						if (section.lines[i] !== '[') {
 							section.lines.pop();
@@ -1024,7 +1113,7 @@ function enexXmlToMdArray(stream: any, resources: ResourceEntity[]): Promise<Ene
 						section.lines.push('(L)');
 						section.lines.push(`](${url})`);
 					}
-				} else if (!previous || previous == url) {
+				} else if (!previous || previous === url) {
 					section.lines.pop();
 					section.lines.pop();
 					section.lines.push(url);
@@ -1090,9 +1179,9 @@ function enexXmlToMdArray(stream: any, resources: ResourceEntity[]): Promise<Ene
 						section.lines.push(`](${url})`);
 					}
 				}
-			} else if (n == 'en-media') {
+			} else if (n === 'en-media') {
 				// Skip
-			} else if (n == 'span') {
+			} else if (n === 'span') {
 				const attributes = state.spanAttributes.pop();
 				if (isSpanWithStyle(attributes)) {
 					if (isSpanStyleBold(attributes)) {
@@ -1109,9 +1198,9 @@ function enexXmlToMdArray(stream: any, resources: ResourceEntity[]): Promise<Ene
 			}
 		});
 
-		saxStream.on('attribute', function() {});
+		saxStream.on('attribute', () => {});
 
-		saxStream.on('end', function() {
+		saxStream.on('end', () => {
 			resolve({
 				content: section,
 				resources: remainingResources,
@@ -1167,6 +1256,14 @@ function drawTable(table: Section) {
 			continue;
 		}
 
+		if (typeof tr === 'string') {
+			// A <TABLE> tag should only have <TR> tags as direct children.
+			// However certain Evernote notes can contain other random tags
+			// such as empty DIVs. In that case we just skip the content.
+			// See test "table_with_invalid_content.html".
+			continue;
+		}
+
 		const isHeader = tr.isHeader;
 		const line = [];
 		const headerLine = [];
@@ -1174,9 +1271,15 @@ function drawTable(table: Section) {
 		for (let tdIndex = 0; tdIndex < tr.lines.length; tdIndex++) {
 			const td = tr.lines[tdIndex];
 
+			if (typeof td === 'string') {
+				// Same comment as above the <TR> tags.
+				continue;
+			}
+
 			if (flatRender) {
 				line.push(BLOCK_OPEN);
 
+				// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 				let currentCells: any[] = [];
 
 				const renderCurrentCells = () => {
@@ -1258,6 +1361,7 @@ function drawTable(table: Section) {
 	lines.push(BLOCK_CLOSE);
 
 	if (caption) {
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 		const captionLines: any[] = renderLines(caption.lines);
 		lines = lines.concat(captionLines);
 	}
@@ -1319,6 +1423,7 @@ function postProcessMarkdown(lines: string[]) {
 
 // A "line" can be some Markdown text, or it can be a section, like a table,
 // etc. so this function returns an array of strings.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 function renderLine(line: any) {
 	if (typeof line === 'object' && line.type === 'table') {
 		// A table
@@ -1349,6 +1454,7 @@ function renderLine(line: any) {
 	}
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 function renderLines(lines: any[]) {
 	let mdLines: string[] = [];
 	for (let i = 0; i < lines.length; i++) {
@@ -1358,9 +1464,9 @@ function renderLines(lines: any[]) {
 	return mdLines;
 }
 
-async function enexXmlToMd(xmlString: string, resources: ResourceEntity[]) {
+async function enexXmlToMd(xmlString: string, resources: ResourceEntity[], tasks: ExtractedTask[]) {
 	const stream = stringToStream(xmlString);
-	const result = await enexXmlToMdArray(stream, resources);
+	const result = await enexXmlToMdArray(stream, resources, tasks);
 
 	let mdLines = renderLines(result.content.lines);
 
@@ -1369,7 +1475,9 @@ async function enexXmlToMd(xmlString: string, resources: ResourceEntity[]) {
 		const r = result.resources[i];
 		if (firstAttachment) mdLines.push(NEWLINE);
 		mdLines.push(NEWLINE);
-		mdLines = addResourceTag(mdLines, r, r.filename);
+		mdLines = addResourceTag(mdLines, `:/${r.id}`, r.mime, {
+			alt: altFromResource(r),
+		});
 		firstAttachment = false;
 	}
 
@@ -1380,4 +1488,4 @@ async function enexXmlToMd(xmlString: string, resources: ResourceEntity[]) {
 	return output.join('\n');
 }
 
-export { enexXmlToMd, processMdArrayNewLines, NEWLINE, addResourceTag };
+export { enexXmlToMd, processMdArrayNewLines, NEWLINE, cssValue };

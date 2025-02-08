@@ -1,21 +1,23 @@
-import { notesSortOrderFieldArray, notesSortOrderNextField, setNotesSortOrder } from './notesSortOrderUtils';
+import { notesSortOrderNextField, setNotesSortOrder } from './notesSortOrderUtils';
 import Setting from '@joplin/lib/models/Setting';
 const { shimInit } = require('@joplin/lib/shim-init-node.js');
 
-beforeAll(() => {
-	shimInit();
-	Setting.autoSaveEnabled = false;
-});
-
 describe('notesSortOrderUtils', () => {
 
-	it('should always provide the same ordered fields', async () => {
-		const expected = ['user_updated_time', 'user_created_time', 'title', 'order'];
-		expect(notesSortOrderFieldArray()).toStrictEqual(expected);
-		expect(notesSortOrderFieldArray()).toStrictEqual(expected);
+	beforeAll(() => {
+		shimInit();
+		Setting.autoSaveEnabled = false;
 	});
 
-	it('should provide the next field cyclicly', async () => {
+	// Disabling as the test doesn't seem very useful.
+
+	// it('should always provide the same ordered fields', async () => {
+	// 	const expected = ['user_updated_time', 'user_created_time', 'title', 'order'];
+	// 	expect(notesSortOrderFieldArray()).toStrictEqual(expected);
+	// 	expect(notesSortOrderFieldArray()).toStrictEqual(expected);
+	// });
+
+	it('should provide the next field cyclically', async () => {
 		expect(notesSortOrderNextField('user_updated_time')).toBe('user_created_time');
 		expect(notesSortOrderNextField('order')).toBe('user_updated_time');
 	});

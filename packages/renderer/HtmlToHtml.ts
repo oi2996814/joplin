@@ -1,12 +1,10 @@
 import htmlUtils from './htmlUtils';
 import linkReplacement from './MdToHtml/linkReplacement';
-import utils, { ItemIdToUrlHandler } from './utils';
-
-// TODO: fix
-// import Setting from '@joplin/lib/models/Setting';
-// const { themeStyle } = require('@joplin/lib/theme');
+import * as utils from './utils';
 import InMemoryCache from './InMemoryCache';
-import { RenderResult } from './MarkupToHtml';
+import noteStyle, { whiteBackgroundNoteStyle } from './noteStyle';
+import { Options as NoteStyleOptions } from './noteStyle';
+import { FsDriver, MarkupRenderer, OptionsResourceModel, RenderOptions, RenderResult } from './types';
 const md5 = require('md5');
 
 // Renderered notes can potentially be quite large (for example
@@ -14,26 +12,15 @@ const md5 = require('md5');
 // relatively small.
 const inMemoryCache = new InMemoryCache(10);
 
-interface FsDriver {
-	writeFile: Function;
-	exists: Function;
-	cacheCssToFile: Function;
+export interface SplittedHtml {
+	html: string;
+	css: string;
 }
 
 interface Options {
-	ResourceModel: any;
+	ResourceModel: OptionsResourceModel;
 	resourceBaseUrl?: string;
 	fsDriver?: FsDriver;
-}
-
-interface RenderOptions {
-	splitted: boolean;
-	bodyOnly: boolean;
-	externalAssetsOnly: boolean;
-	resources: any;
-	postMessageSyntax: string;
-	enableLongPress: boolean;
-	itemIdToUrl?: ItemIdToUrlHandler;
 }
 
 // https://github.com/es-shims/String.prototype.trimStart/blob/main/implementation.js
@@ -43,14 +30,14 @@ function trimStart(s: string): string {
 	return s.replace(startWhitespace, '');
 }
 
-export default class HtmlToHtml {
+export default class HtmlToHtml implements MarkupRenderer {
 
 	private resourceBaseUrl_;
 	private ResourceModel_;
 	private cache_;
-	private fsDriver_: any;
+	private fsDriver_: FsDriver;
 
-	constructor(options: Options = null) {
+	public constructor(options: Options = null) {
 		options = {
 			ResourceModel: null,
 			...options,
@@ -72,31 +59,32 @@ export default class HtmlToHtml {
 		}
 	}
 
-	fsDriver() {
+	public fsDriver() {
 		return this.fsDriver_;
 	}
 
-	splitHtml(html: string) {
-		const trimmedHtml = trimStart(html);
-		if (trimmedHtml.indexOf('<style>') !== 0) return { html: html, css: '' };
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+	public async allAssets(theme: any, noteStyleOptions: NoteStyleOptions = null) {
+		let cssStrings: string[] = [];
 
-		const closingIndex = trimmedHtml.indexOf('</style>');
-		if (closingIndex < 0) return { html: html, css: '' };
+		if (noteStyleOptions.whiteBackgroundNoteRendering) {
+			cssStrings = [whiteBackgroundNoteStyle()];
+		} else {
+			cssStrings = [noteStyle(theme, noteStyleOptions).join('\n')];
+		}
 
-		return {
-			html: trimmedHtml.substr(closingIndex + 8),
-			css: trimmedHtml.substr(7, closingIndex),
-		};
+		return [await this.fsDriver().cacheCssToFile(cssStrings)];
 	}
 
-	async allAssets(/* theme*/): Promise<any[]> {
-		return []; // TODO
+	public clearCache(): void {
+		// TODO: Clear the in-memory cache
 	}
 
 	// Note: the "theme" variable is ignored and instead the light theme is
 	// always used for HTML notes.
 	// See: https://github.com/laurent22/joplin/issues/3698
-	async render(markup: string, _theme: any, options: RenderOptions): Promise<RenderResult> {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+	public async render(markup: string, theme: any, options: RenderOptions): Promise<RenderResult> {
 		options = {
 			splitted: false,
 			postMessageSyntax: 'postMessage',
@@ -104,16 +92,18 @@ export default class HtmlToHtml {
 			...options,
 		};
 
-		const cacheKey = md5(escape(markup));
+		const cacheKey = md5(escape(JSON.stringify({ markup, options, baseUrl: this.resourceBaseUrl_ })));
 		let html = this.cache_.value(cacheKey);
 
 		if (!html) {
-			html = htmlUtils.sanitizeHtml(markup);
+			html = htmlUtils.sanitizeHtml(markup, {
+				allowedFilePrefixes: options.allowedFilePrefixes,
+			});
 
-			html = htmlUtils.processImageTags(html, (data: any) => {
+			html = htmlUtils.processImageTags(html, (data) => {
 				if (!data.src) return null;
 
-				const r = utils.imageReplacement(this.ResourceModel_, data.src, options.resources, this.resourceBaseUrl_, options.itemIdToUrl);
+				const r = utils.imageReplacement(this.ResourceModel_, data, options.resources, this.resourceBaseUrl_, options.itemIdToUrl);
 				if (!r) return null;
 
 				if (typeof r === 'string') {
@@ -129,6 +119,7 @@ export default class HtmlToHtml {
 				}
 			});
 
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 			html = htmlUtils.processAnchorTags(html, (data: any) => {
 				if (!data.href) return null;
 
@@ -137,6 +128,7 @@ export default class HtmlToHtml {
 					ResourceModel: this.ResourceModel_,
 					postMessageSyntax: options.postMessageSyntax,
 					enableLongPress: options.enableLongPress,
+					...options.plugins?.link_open,
 				});
 
 				if (!r.html) return null;
@@ -158,12 +150,10 @@ export default class HtmlToHtml {
 			};
 		}
 
-		// const lightTheme = themeStyle(Setting.THEME_LIGHT);
-		// let cssStrings = noteStyle(lightTheme);
-		let cssStrings: string[] = [];
+		let cssStrings = options.whiteBackgroundNoteRendering ? [whiteBackgroundNoteStyle()] : noteStyle(theme);
 
 		if (options.splitted) {
-			const splitted = this.splitHtml(html);
+			const splitted = splitHtml(html);
 			cssStrings = [splitted.css].concat(cssStrings);
 
 			const output: RenderResult = {
@@ -188,3 +178,16 @@ export default class HtmlToHtml {
 		};
 	}
 }
+
+const splitHtmlRegex = /^<style>([\s\S]*?)<\/style>([\s\S]*)$/i;
+
+// This function is designed to handle the narrow case of HTML generated by the
+// HtmlToHtml class and used by the Rich Text editor, and that's with the STYLE
+// tag at the top, followed by the HTML code. If it's anything else, we don't
+// try to handle it and return the whole HTML code.
+export const splitHtml = (html: string): SplittedHtml => {
+	const trimmedHtml = trimStart(html);
+	const result = trimmedHtml.match(splitHtmlRegex);
+	if (!result) return { html, css: '' };
+	return { html: result[2], css: result[1] };
+};

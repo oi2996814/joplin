@@ -1,11 +1,9 @@
 import Setting from '../models/Setting';
 import time from '../time';
 
-describe('dateFormats', function() {
+describe('dateFormats', () => {
 
-	beforeEach(async (done) => {
-		done();
-	});
+
 
 	it('should format date according to DATE_FORMAT', (async () => {
 
@@ -39,10 +37,11 @@ describe('dateFormats', function() {
 
 		// TIME_FORMAT_1 = 'HH:mm';
 		// TIME_FORMAT_2 = 'h:mm A';
+		// TIME_FORMAT_3 = 'HH.mm';
 
 		expect(time.formatMsToLocal(now, Setting.TIME_FORMAT_1)).toBe('20:30');
 		expect(time.formatMsToLocal(now, Setting.TIME_FORMAT_2)).toBe('8:30 PM');
-
+		expect(time.formatMsToLocal(now, Setting.TIME_FORMAT_3)).toBe('20.30');
 	}));
 
 });

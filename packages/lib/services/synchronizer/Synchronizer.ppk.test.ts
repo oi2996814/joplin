@@ -4,13 +4,12 @@ import { fetchSyncInfo, localSyncInfo, setEncryptionEnabled } from '../synchroni
 import { EncryptionMethod } from '../e2ee/EncryptionService';
 import { updateMasterPassword } from '../e2ee/utils';
 
-describe('Synchronizer.ppk', function() {
+describe('Synchronizer.ppk', () => {
 
-	beforeEach(async (done) => {
+	beforeEach(async () => {
 		await setupDatabaseAndSynchronizer(1);
 		await setupDatabaseAndSynchronizer(2);
 		await switchClient(1);
-		done();
 	});
 
 	it('should not create a public private key pair if not using E2EE', async () => {

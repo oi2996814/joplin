@@ -1,8 +1,9 @@
 import time from '@joplin/lib/time';
-import { DbConnection, dropTables, migrateLatest } from '../db';
+import { DbConnection, dropTables, migrateLatest, truncateTables } from '../db';
 import newModelFactory from '../models/factory';
 import { AccountType } from '../models/UserModel';
 import { User, UserFlagType } from '../services/database/types';
+import { Minute, Second } from '../utils/time';
 import { Config } from '../utils/types';
 
 export interface CreateTestUsersOptions {
@@ -10,6 +11,7 @@ export interface CreateTestUsersOptions {
 	fromNum?: number;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 export async function handleDebugCommands(argv: any, db: DbConnection, config: Config): Promise<boolean> {
 	if (argv.debugCreateTestUsers) {
 		await createTestUsers(db, config);
@@ -25,6 +27,25 @@ export async function clearDatabase(db: DbConnection) {
 	await migrateLatest(db);
 }
 
+const includedTables = [
+	'changes',
+	'emails',
+	'events',
+	'item_resources',
+	'items',
+	'notifications',
+	'sessions',
+	'share_users',
+	'shares',
+	'subscriptions',
+	'teams',
+	'team_users',
+	'user_deletions',
+	'user_flags',
+	'user_items',
+	'users',
+];
+
 export async function createTestUsers(db: DbConnection, config: Config, options: CreateTestUsersOptions = null) {
 	options = {
 		count: 0,
@@ -32,9 +53,16 @@ export async function createTestUsers(db: DbConnection, config: Config, options:
 		...options,
 	};
 
-	const password = 'hunter1hunter2hunter3';
+	const password = '111111';
+	const models = newModelFactory(db, db, config);
 
-	const models = newModelFactory(db, config);
+	await truncateTables(db, includedTables);
+
+	await models.user().save({
+		email: 'admin@localhost',
+		password: 'admin',
+		is_admin: 1,
+	});
 
 	if (options.count) {
 		const users: User[] = [];
@@ -45,19 +73,18 @@ export async function createTestUsers(db: DbConnection, config: Config, options:
 				email: `user${userNum}@example.com`,
 				password,
 				full_name: `User ${userNum}`,
+				account_type: userNum % 2 === 0 ? AccountType.Pro : AccountType.Basic,
 			});
 		}
 
 		await models.user().saveMulti(users);
 	} else {
-		await dropTables(db);
-		await migrateLatest(db);
-
-		for (let userNum = 1; userNum <= 2; userNum++) {
+		for (let userNum = 1; userNum <= 3; userNum++) {
 			await models.user().save({
 				email: `user${userNum}@example.com`,
 				password,
 				full_name: `User ${userNum}`,
+				account_type: AccountType.Pro,
 			});
 		}
 
@@ -67,7 +94,7 @@ export async function createTestUsers(db: DbConnection, config: Config, options:
 				'With Sub',
 				AccountType.Basic,
 				'usr_111',
-				'sub_111'
+				'sub_111',
 			);
 			await models.user().save({ id: user.id, password });
 		}
@@ -78,7 +105,7 @@ export async function createTestUsers(db: DbConnection, config: Config, options:
 				'Failed Payment',
 				AccountType.Basic,
 				'usr_222',
-				'sub_222'
+				'sub_222',
 			);
 			await models.user().save({ id: user.id, password });
 			await models.subscription().handlePayment(subscription.stripe_subscription_id, false);
@@ -98,3 +125,16 @@ export async function createTestUsers(db: DbConnection, config: Config, options:
 		}
 	}
 }
+
+export async function createUserDeletions(db: DbConnection, config: Config) {
+	const models = newModelFactory(db, db, config);
+
+	const users = await models.user().all();
+
+	for (let i = 0; i < 3; i++) {
+		if (i >= users.length) break;
+		if (users[i].is_admin) continue;
+		await models.userDeletion().add(users[i].id, Date.now() + 60 * Second + (i * 10 * Minute));
+	}
+}
+

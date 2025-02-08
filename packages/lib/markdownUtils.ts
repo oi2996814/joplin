@@ -1,7 +1,7 @@
 import { validateLinks } from '@joplin/renderer';
 const stringPadding = require('string-padding');
 const urlUtils = require('./urlUtils');
-const MarkdownIt = require('markdown-it');
+import * as MarkdownIt from 'markdown-it';
 
 // Taken from codemirror/addon/edit/continuelist.js
 const listRegex = /^(\s*)([*+-] \[[x ]\]\s|[*+-]\s|(\d+)([.)]\s))(\s*)/;
@@ -16,13 +16,19 @@ export enum MarkdownTableJustify {
 export interface MarkdownTableHeader {
 	name: string;
 	label: string;
-	filter?: Function;
+	filter?: (content: string)=> string;
 	disableEscape?: boolean;
+	disableHtmlEscape?: boolean;
 	justify?: MarkdownTableJustify;
 }
 
 export interface MarkdownTableRow {
 	[key: string]: string;
+}
+
+export interface MarkdownTable {
+	header: MarkdownTableHeader[];
+	rows: MarkdownTableRow[];
 }
 
 const markdownUtils = {
@@ -38,10 +44,12 @@ const markdownUtils = {
 		return url;
 	},
 
-	escapeTableCell(text: string) {
+	escapeTableCell(text: string, escapeHtml = true) {
 		// Disable HTML code
-		text = text.replace(/</g, '&lt;');
-		text = text.replace(/>/g, '&gt;');
+		if (escapeHtml) {
+			text = text.replace(/</g, '&lt;');
+			text = text.replace(/>/g, '&gt;');
+		}
 		// Table cells can't contain new lines so replace with <br/>
 		text = text.replace(/\n/g, '<br/>');
 		// "|" is a reserved characters that should be escaped
@@ -62,14 +70,14 @@ const markdownUtils = {
 	},
 
 	prependBaseUrl(md: string, baseUrl: string) {
-		// eslint-disable-next-line no-useless-escape
+		// eslint-disable-next-line no-useless-escape, @typescript-eslint/no-explicit-any -- Old code before rule was applied
 		return md.replace(/(\]\()([^\s\)]+)(.*?\))/g, (_match: any, before: string, url: string, after: string) => {
 			return before + urlUtils.prependBaseUrl(url, baseUrl) + after;
 		});
 	},
 
 	// Returns the **encoded** URLs, so to be useful they should be decoded again before use.
-	extractFileUrls(md: string, onlyImage: boolean = false): Array<string> {
+	extractFileUrls(md: string, onlyType: string = null): string[] {
 		const markdownIt = new MarkdownIt();
 		markdownIt.validateLink = validateLinks; // Necessary to support file:/// links
 
@@ -77,10 +85,17 @@ const markdownUtils = {
 		const tokens = markdownIt.parse(md, env);
 		const output: string[] = [];
 
+		let linkType = onlyType;
+		if (linkType === 'pdf') linkType = 'link_open';
+
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 		const searchUrls = (tokens: any[]) => {
 			for (let i = 0; i < tokens.length; i++) {
 				const token = tokens[i];
-				if ((onlyImage === true && token.type === 'image') || (onlyImage === false && (token.type === 'image' || token.type === 'link_open'))) {
+				if ((!onlyType && (token.type === 'link_open' || token.type === 'image')) || (!!onlyType && token.type === onlyType) || (onlyType === 'pdf' && token.type === 'link_open')) {
+					// Pdf embeds are a special case, they are represented as 'link_open' tokens but are marked with 'embedded_pdf' as link name by the parser
+					// We are making sure if its in the proper pdf link format, only then we add it to the list
+					if (onlyType === 'pdf' && !(tokens.length > i + 1 && tokens[i + 1].type === 'text' && tokens[i + 1].content === 'embedded_pdf')) continue;
 					for (let j = 0; j < token.attrs.length; j++) {
 						const a = token.attrs[j];
 						if ((a[0] === 'src' || a[0] === 'href') && a.length >= 2 && a[1]) {
@@ -107,7 +122,11 @@ const markdownUtils = {
 	},
 
 	extractImageUrls(md: string) {
-		return markdownUtils.extractFileUrls(md,true);
+		return markdownUtils.extractFileUrls(md, 'image');
+	},
+
+	extractPdfUrls(md: string) {
+		return markdownUtils.extractFileUrls(md, 'pdf');
 	},
 
 	// The match results has 5 items
@@ -162,7 +181,7 @@ const markdownUtils = {
 			for (let j = 0; j < headers.length; j++) {
 				const h = headers[j];
 				const value = (h.filter ? h.filter(row[h.name]) : row[h.name]) || '';
-				const valueMd = h.disableEscape ? value : markdownUtils.escapeTableCell(value);
+				const valueMd = h.disableEscape ? value : markdownUtils.escapeTableCell(value, !h.disableHtmlEscape);
 				rowMd.push(stringPadding(valueMd, minCellWidth, ' ', stringPadding.RIGHT));
 			}
 			output.push(`| ${rowMd.join(' | ')} |`);
@@ -197,12 +216,19 @@ const markdownUtils = {
 
 	titleFromBody(body: string) {
 		if (!body) return '';
+		const spaceEntities = /&nbsp;/g;
+		body = body.replace(spaceEntities, ' ');
+		const lines = body.trim().split('\n');
+		const title = lines[0].trim();
+
 		const mdLinkRegex = /!?\[([^\]]+?)\]\(.+?\)/g;
 		const emptyMdLinkRegex = /!?\[\]\((.+?)\)/g;
 		const filterRegex = /^[# \n\t*`-]*/;
-		const lines = body.trim().split('\n');
-		const title = lines[0].trim();
-		return title.replace(filterRegex, '').replace(mdLinkRegex, '$1').replace(emptyMdLinkRegex, '$1').substring(0,80);
+		return title
+			.replace(filterRegex, '')
+			.replace(mdLinkRegex, '$1')
+			.replace(emptyMdLinkRegex, '$1')
+			.substring(0, 80);
 	},
 };
 

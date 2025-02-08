@@ -1,4 +1,12 @@
 /* eslint-disable no-unused-vars */
+
+// ====================== IMPORTANT ============================================
+// As of 2023-10-23 we should not use these tests anymore as they are too flaky.
+// To test the reducer we can use `reducer.test.js` or `app.reducer.test.ts`. If
+// it becomes too much of a burden to maintain these `feature_*` tests we may to
+// remove them.
+// ====================== IMPORTANT ============================================
+
 const { setupDatabaseAndSynchronizer, switchClient, createNTestFolders, createNTestNotes, createNTestTags, TestApp } = require('@joplin/lib/testing/test-utils.js');
 const Setting = require('@joplin/lib/models/Setting').default;
 const Folder = require('@joplin/lib/models/Folder').default;
@@ -8,18 +16,16 @@ const time = require('@joplin/lib/time').default;
 
 let testApp = null;
 
-describe('integration_NoteList', function() {
+describe('integration_NoteList', () => {
 
-	beforeEach(async (done) => {
+	beforeEach(async () => {
 		testApp = new TestApp();
 		await testApp.start(['--no-welcome']);
-		done();
 	});
 
-	afterEach(async (done) => {
+	afterEach(async () => {
 		if (testApp !== null) await testApp.destroy();
 		testApp = null;
-		done();
 	});
 
 	// Reference: https://github.com/laurent22/joplin/issues/2709

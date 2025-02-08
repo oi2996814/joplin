@@ -7,9 +7,9 @@ export default function(url: string) {
 	// url should be normalized at this point, and existing entities are decoded
 	const str = url.trim().toLowerCase();
 
-	if (str.indexOf('data:image/svg+xml,') === 0) {
+	if (str.startsWith('data:image/svg+xml,') || str.startsWith('data:image/svg+xml;utf8,')) {
 		return true;
 	}
 
-	return BAD_PROTO_RE.test(str) ? (GOOD_DATA_RE.test(str) ? true : false) : true;
+	return BAD_PROTO_RE.test(str) ? (!!GOOD_DATA_RE.test(str)) : true;
 }

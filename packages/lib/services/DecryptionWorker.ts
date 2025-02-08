@@ -3,7 +3,7 @@ import BaseModel from '../BaseModel';
 import MasterKey from '../models/MasterKey';
 import Resource from '../models/Resource';
 import ResourceService from './ResourceService';
-import Logger from '../Logger';
+import Logger from '@joplin/utils/Logger';
 import shim from '../shim';
 import KvStore from './KvStore';
 import EncryptionService from './e2ee/EncryptionService';
@@ -14,6 +14,7 @@ interface DecryptionResult {
 	skippedItemCount?: number;
 	decryptedItemCounts?: number;
 	decryptedItemCount?: number;
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	error: any;
 }
 
@@ -21,63 +22,69 @@ export default class DecryptionWorker {
 
 	public static instance_: DecryptionWorker = null;
 
-	private state_: string = 'idle';
+	private state_ = 'idle';
 	private logger_: Logger;
+	// eslint-disable-next-line @typescript-eslint/ban-types -- Old code before rule was applied
 	public dispatch: Function = () => {};
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	private scheduleId_: any = null;
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	private eventEmitter_: any;
 	private kvStore_: KvStore = null;
 	private maxDecryptionAttempts_ = 2;
 	private startCalls_: boolean[] = [];
 	private encryptionService_: EncryptionService = null;
 
-	constructor() {
+	public constructor() {
 		this.state_ = 'idle';
 		this.logger_ = new Logger();
 		this.eventEmitter_ = new EventEmitter();
 	}
 
-	setLogger(l: Logger) {
+	public setLogger(l: Logger) {
 		this.logger_ = l;
 	}
 
-	logger() {
+	public logger() {
 		return this.logger_;
 	}
 
-	on(eventName: string, callback: Function) {
+	// eslint-disable-next-line @typescript-eslint/ban-types -- Old code before rule was applied
+	public on(eventName: string, callback: Function) {
 		return this.eventEmitter_.on(eventName, callback);
 	}
 
-	off(eventName: string, callback: Function) {
+	// eslint-disable-next-line @typescript-eslint/ban-types -- Old code before rule was applied
+	public off(eventName: string, callback: Function) {
 		return this.eventEmitter_.removeListener(eventName, callback);
 	}
 
-	static instance() {
+	public static instance() {
 		if (DecryptionWorker.instance_) return DecryptionWorker.instance_;
 		DecryptionWorker.instance_ = new DecryptionWorker();
 		return DecryptionWorker.instance_;
 	}
 
-	setEncryptionService(v: any) {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+	public setEncryptionService(v: any) {
 		this.encryptionService_ = v;
 	}
 
-	setKvStore(v: KvStore) {
+	public setKvStore(v: KvStore) {
 		this.kvStore_ = v;
 	}
 
-	encryptionService() {
+	public encryptionService() {
 		if (!this.encryptionService_) throw new Error('DecryptionWorker.encryptionService_ is not set!!');
 		return this.encryptionService_;
 	}
 
-	kvStore() {
+	public kvStore() {
 		if (!this.kvStore_) throw new Error('DecryptionWorker.kvStore_ is not set!!');
 		return this.kvStore_;
 	}
 
-	async scheduleStart() {
+	public async scheduleStart() {
 		if (this.scheduleId_) return;
 
 		this.scheduleId_ = shim.setTimeout(() => {
@@ -88,7 +95,7 @@ export default class DecryptionWorker {
 		}, 1000);
 	}
 
-	async decryptionDisabledItems() {
+	public async decryptionDisabledItems() {
 		let items = await this.kvStore().searchByPrefix('decrypt:');
 		items = items.filter(item => item.value > this.maxDecryptionAttempts_);
 		items = items.map(item => {
@@ -101,20 +108,22 @@ export default class DecryptionWorker {
 		return items;
 	}
 
-	async clearDisabledItem(typeId: string, itemId: string) {
+	public async clearDisabledItem(typeId: string, itemId: string) {
 		await this.kvStore().deleteValue(`decrypt:${typeId}:${itemId}`);
 	}
 
-	async clearDisabledItems() {
+	public async clearDisabledItems() {
 		await this.kvStore().deleteByPrefix('decrypt:');
 	}
 
-	dispatchReport(report: any) {
-		const action = Object.assign({}, report);
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+	public dispatchReport(report: any) {
+		const action = { ...report };
 		action.type = 'DECRYPTION_WORKER_SET';
 		this.dispatch(action);
 	}
 
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	private async start_(options: any = null): Promise<DecryptionResult> {
 		if (options === null) options = {};
 		if (!('masterKeyNotLoadedHandler' in options)) options.masterKeyNotLoadedHandler = 'throw';
@@ -160,6 +169,7 @@ export default class DecryptionWorker {
 		this.state_ = 'started';
 
 		const excludedIds = [];
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 		const decryptedItemCounts: any = {};
 		let skippedItemCount = 0;
 
@@ -167,7 +177,7 @@ export default class DecryptionWorker {
 		this.dispatchReport({ state: 'started' });
 
 		try {
-			const notLoadedMasterKeyDisptaches = [];
+			const notLoadedMasterKeyDispatches = [];
 
 			while (true) {
 				const result: ItemsThatNeedDecryptionResult = await BaseItem.itemsThatNeedDecryption(excludedIds);
@@ -227,12 +237,12 @@ export default class DecryptionWorker {
 						excludedIds.push(item.id);
 
 						if (error.code === 'masterKeyNotLoaded' && options.masterKeyNotLoadedHandler === 'dispatch') {
-							if (notLoadedMasterKeyDisptaches.indexOf(error.masterKeyId) < 0) {
+							if (notLoadedMasterKeyDispatches.indexOf(error.masterKeyId) < 0) {
 								this.dispatch({
 									type: 'MASTERKEY_ADD_NOT_LOADED',
 									id: error.masterKeyId,
 								});
-								notLoadedMasterKeyDisptaches.push(error.masterKeyId);
+								notLoadedMasterKeyDispatches.push(error.masterKeyId);
 							}
 							await clearDecryptionCounter();
 							continue;
@@ -244,7 +254,8 @@ export default class DecryptionWorker {
 						}
 
 						if (options.errorHandler === 'log') {
-							this.logger().warn(`DecryptionWorker: error for: ${item.id} (${ItemClass.tableName()})`, error, item);
+							this.logger().warn(`DecryptionWorker: error for: ${item.id} (${ItemClass.tableName()})`, error);
+							this.logger().debug('Item with error:', item);
 						} else {
 							throw error;
 						}
@@ -280,7 +291,7 @@ export default class DecryptionWorker {
 			error: null,
 		};
 
-		this.dispatchReport(Object.assign({}, finalReport, { state: 'idle' }));
+		this.dispatchReport({ ...finalReport, state: 'idle' });
 
 		if (downloadedButEncryptedBlobCount) {
 			this.logger().info(`DecryptionWorker: Some resources have been downloaded but are not decrypted yet. Scheduling another decryption. Resource count: ${downloadedButEncryptedBlobCount}`);
@@ -290,6 +301,7 @@ export default class DecryptionWorker {
 		return finalReport;
 	}
 
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	public async start(options: any = {}) {
 		this.startCalls_.push(true);
 		let output = null;
@@ -301,7 +313,7 @@ export default class DecryptionWorker {
 		return output;
 	}
 
-	async destroy() {
+	public async destroy() {
 		this.eventEmitter_.removeAllListeners();
 		if (this.scheduleId_) {
 			shim.clearTimeout(this.scheduleId_);

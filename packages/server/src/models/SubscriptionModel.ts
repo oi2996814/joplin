@@ -2,7 +2,7 @@ import { Knex } from 'knex';
 import { EmailSender, Subscription, User, UserFlagType, Uuid } from '../services/database/types';
 import { ErrorNotFound } from '../utils/errors';
 import { Day } from '../utils/time';
-import uuidgen from '../utils/uuidgen';
+import { uuidgen } from '@joplin/lib/uuid';
 import paymentFailedTemplate from '../views/emails/paymentFailedTemplate';
 import BaseModel from './BaseModel';
 import { AccountType } from './UserModel';
@@ -115,7 +115,7 @@ export default class SubscriptionModel extends BaseModel<Subscription> {
 				recipient_email: user.email,
 				recipient_id: user.id,
 				recipient_name: user.full_name || '',
-				sender_id: EmailSender.Support,
+				sender_id: EmailSender.NoReply,
 			});
 		}
 	}

@@ -1,4 +1,3 @@
-import { ModelType } from '@joplin/lib/BaseModel';
 import { resourceBlobPath } from '../utils/joplinUtils';
 import { Change, ChangeType, Item, Share, ShareType, ShareUserStatus, User, Uuid } from '../services/database/types';
 import { unique } from '../utils/array';
@@ -8,7 +7,8 @@ import BaseModel, { AclAction, DeleteOptions, ValidateOptions } from './BaseMode
 import { userIdFromUserContentUrl } from '../utils/routeUtils';
 import { getCanShareFolder } from './utils/user';
 import { isUniqueConstraintError } from '../db';
-import Logger from '@joplin/lib/Logger';
+import Logger from '@joplin/utils/Logger';
+import { PerformanceTimer } from '../utils/time';
 
 const logger = Logger.create('ShareModel');
 
@@ -102,6 +102,7 @@ export default class ShareModel extends BaseModel<Share> {
 		return !!r;
 	}
 
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	public shareUrl(shareOwnerId: Uuid, id: Uuid, query: any = null): string {
 		return setQueryParameters(`${this.personalizedUserContentBaseUrl(shareOwnerId)}/shares/${id}`, query);
 	}
@@ -115,6 +116,14 @@ export default class ShareModel extends BaseModel<Share> {
 		return this.db(this.tableName).select(this.defaultFields).whereIn('item_id', itemIds);
 	}
 
+	public async byItemAndRecursive(itemId: Uuid, recursive: boolean): Promise<Share | null> {
+		return this.db(this.tableName)
+			.select(this.defaultFields)
+			.where('item_id', itemId)
+			.where('recursive', recursive ? 1 : 0)
+			.first();
+	}
+
 	public async byUserId(userId: Uuid, type: ShareType): Promise<Share[]> {
 		const query1 = this
 			.db(this.tableName)
@@ -123,7 +132,7 @@ export default class ShareModel extends BaseModel<Share> {
 			.whereIn('id', this
 				.db('share_users')
 				.select('share_id')
-				.where('user_id', '=', userId)
+				.where('user_id', '=', userId),
 			);
 
 		const query2 = this
@@ -158,7 +167,7 @@ export default class ShareModel extends BaseModel<Share> {
 			.whereIn('id', this.db('share_users')
 				.select('share_id')
 				.where('user_id', '=', userId)
-				.andWhere('status', '=', ShareUserStatus.Accepted
+				.andWhere('status', '=', ShareUserStatus.Accepted,
 				));
 
 		if (type) void query.andWhere('type', '=', type);
@@ -176,6 +185,7 @@ export default class ShareModel extends BaseModel<Share> {
 	}
 
 	public async updateSharedItems3() {
+		const perfTimer = new PerformanceTimer(logger, 'updateSharedItems3');
 
 		const addUserItem = async (shareUserId: Uuid, itemId: Uuid) => {
 			try {
@@ -190,21 +200,31 @@ export default class ShareModel extends BaseModel<Share> {
 		};
 
 		const handleCreated = async (change: Change, item: Item, share: Share) => {
-			// console.info('CREATE ITEM', item);
-			// console.info('CHANGE', change);
-
-			// if (![ModelType.Note, ModelType.Folder, ModelType.Resource].includes(item.jop_type)) return;
 			if (!item.jop_share_id) return;
+
+			// When a folder is unshared, the share object is deleted, then all
+			// items that were shared get their 'share_id' property set to an
+			// empty string. This is all done client side.
+			//
+			// However it means that if a share object is deleted but the items
+			// are not synced, we'll find items that are associated with a share
+			// that no longer exists. This is fine, but we need to handle it
+			// properly below, otherwise the share update process will fail.
+
+			if (!share) {
+				logger.warn(`Found an item (${item.id}) associated with a share that no longer exists (${item.jop_share_id}) - skipping it`);
+				return;
+			}
+
+			perfTimer.push('handleCreated');
 
 			const shareUserIds = await this.allShareUserIds(share);
 			for (const shareUserId of shareUserIds) {
 				if (shareUserId === change.user_id) continue;
 				await addUserItem(shareUserId, item.id);
-
-				if (item.jop_type === ModelType.Resource) {
-					// const resourceItem = await this.models().item().loadByName(change.user_id, resourceBlobPath(
-				}
 			}
+
+			perfTimer.pop();
 		};
 
 		const handleUpdated = async (change: Change, item: Item, share: Share) => {
@@ -214,22 +234,36 @@ export default class ShareModel extends BaseModel<Share> {
 
 			if (previousShareId === shareId) return;
 
-			const previousShare = previousShareId ? await this.models().share().load(previousShareId) : null;
+			perfTimer.push('handleUpdated');
 
-			if (previousShare) {
-				const shareUserIds = await this.allShareUserIds(previousShare);
-				for (const shareUserId of shareUserIds) {
-					if (shareUserId === change.user_id) continue;
-					await removeUserItem(shareUserId, item.id);
-				}
-			}
+			try {
+				const previousShare = previousShareId ? await this.models().share().load(previousShareId) : null;
 
-			if (share) {
-				const shareUserIds = await this.allShareUserIds(share);
-				for (const shareUserId of shareUserIds) {
-					if (shareUserId === change.user_id) continue;
-					await addUserItem(shareUserId, item.id);
+				if (previousShare) {
+					const shareUserIds = await this.allShareUserIds(previousShare);
+					for (const shareUserId of shareUserIds) {
+						if (shareUserId === change.user_id) continue;
+						try {
+							await removeUserItem(shareUserId, item.id);
+						} catch (error) {
+							if (error.httpCode === ErrorNotFound.httpCode) {
+								logger.warn('Could not remove a user item because it has already been removed:', error);
+							} else {
+								throw error;
+							}
+						}
+					}
 				}
+
+				if (share) {
+					const shareUserIds = await this.allShareUserIds(share);
+					for (const shareUserId of shareUserIds) {
+						if (shareUserId === change.user_id) continue;
+						await addUserItem(shareUserId, item.id);
+					}
+				}
+			} finally {
+				perfTimer.pop();
 			}
 		};
 
@@ -243,6 +277,8 @@ export default class ShareModel extends BaseModel<Share> {
 		// that have recently changed, and the performed SQL queries are
 		// index-based.
 		const checkForMissingUserItems = async (shares: Share[]) => {
+			perfTimer.push(`checkForMissingUserItems: ${shares.length} shares`);
+
 			for (const share of shares) {
 				const realShareItemCount = await this.itemCountByShareId(share.id);
 				const shareItemCountPerUser = await this.itemCountByShareIdPerUser(share.id);
@@ -257,6 +293,8 @@ export default class ShareModel extends BaseModel<Share> {
 					}
 				}
 			}
+
+			perfTimer.pop();
 		};
 
 		// This loop essentially applies the change made by one user to all the
@@ -274,29 +312,51 @@ export default class ShareModel extends BaseModel<Share> {
 		// This is probably safer in terms of avoiding race conditions and
 		// possibly faster.
 
-		while (true) {
-			const latestProcessedChange = await this.models().keyValue().value<string>('ShareService::latestProcessedChange');
+		perfTimer.push('Main');
 
+		while (true) {
+			perfTimer.push('Get latestProcessedChange');
+			const latestProcessedChange = await this.models().keyValue().value<string>('ShareService::latestProcessedChange');
+			perfTimer.pop();
+
+			perfTimer.push('Get paginated changes');
 			const paginatedChanges = await this.models().change().allFromId(latestProcessedChange || '');
+			perfTimer.pop();
 			const changes = paginatedChanges.items;
 
 			if (!changes.length) {
+				perfTimer.push('Set latestProcessedChange');
 				await this.models().keyValue().setValue('ShareService::latestProcessedChange', paginatedChanges.cursor);
+				perfTimer.pop();
 			} else {
+				perfTimer.push(`Load items for ${changes.length} changes`);
 				const items = await this.models().item().loadByIds(changes.map(c => c.item_id));
+				perfTimer.pop();
 				const shareIds = unique(items.filter(i => !!i.jop_share_id).map(i => i.jop_share_id));
-				const shares = await this.models().share().loadByIds(shareIds);
 
+				perfTimer.push(`Load ${shareIds.length} shares`);
+				const shares = await this.models().share().loadByIds(shareIds);
+				perfTimer.pop();
+
+				perfTimer.push('Change processing transaction');
 				await this.withTransaction(async () => {
+					perfTimer.push(`Processing ${changes.length} changes`);
+
 					for (const change of changes) {
 						const item = items.find(i => i.id === change.item_id);
 
-						if (change.type === ChangeType.Create) {
-							await handleCreated(change, item, shares.find(s => s.id === item.jop_share_id));
-						}
+						// Item associated with the change may have been
+						// deleted, so take this into account.
+						if (item) {
+							const itemShare = shares.find(s => s.id === item.jop_share_id);
 
-						if (change.type === ChangeType.Update) {
-							await handleUpdated(change, item, shares.find(s => s.id === item.jop_share_id));
+							if (change.type === ChangeType.Create) {
+								await handleCreated(change, item, itemShare);
+							}
+
+							if (change.type === ChangeType.Update) {
+								await handleUpdated(change, item, itemShare);
+							}
 						}
 
 						// We don't need to handle ChangeType.Delete because when an
@@ -307,11 +367,16 @@ export default class ShareModel extends BaseModel<Share> {
 					await checkForMissingUserItems(shares);
 
 					await this.models().keyValue().setValue('ShareService::latestProcessedChange', paginatedChanges.cursor);
+
+					perfTimer.pop();
 				}, 'ShareService::updateSharedItems3');
+				perfTimer.pop();
 			}
 
 			if (!paginatedChanges.has_more) break;
 		}
+
+		perfTimer.pop();
 	}
 
 	public async updateResourceShareStatus(doShare: boolean, _shareId: Uuid, changerUserId: Uuid, toUserId: Uuid, resourceIds: string[]) {
@@ -378,11 +443,11 @@ export default class ShareModel extends BaseModel<Share> {
 		return super.save(shareToSave);
 	}
 
-	public async shareNote(owner: User, noteId: string, masterKeyId: string): Promise<Share> {
+	public async shareNote(owner: User, noteId: string, masterKeyId: string, recursive: boolean): Promise<Share> {
 		const noteItem = await this.models().item().loadByJopId(owner.id, noteId);
 		if (!noteItem) throw new ErrorNotFound(`No such note: ${noteId}`);
 
-		const existingShare = await this.byItemId(noteItem.id);
+		const existingShare = await this.byItemAndRecursive(noteItem.id, recursive);
 		if (existingShare) return existingShare;
 
 		const shareToSave: Share = {
@@ -391,6 +456,7 @@ export default class ShareModel extends BaseModel<Share> {
 			owner_id: owner.id,
 			note_id: noteId,
 			master_key_id: masterKeyId,
+			recursive: recursive ? 1 : 0,
 		};
 
 		await this.checkIfAllowed(owner, AclAction.Create, shareToSave);
@@ -411,6 +477,16 @@ export default class ShareModel extends BaseModel<Share> {
 		}, 'ShareModel::delete');
 	}
 
+	public async deleteByUserId(userId: Uuid) {
+		const shares = await this.sharesByUser(userId);
+
+		await this.withTransaction(async () => {
+			for (const share of shares) {
+				await this.delete(share.id);
+			}
+		}, 'ShareModel::deleteByUserId');
+	}
+
 	public async itemCountByShareId(shareId: Uuid): Promise<number> {
 		const r = await this
 			.db('items')
@@ -425,7 +501,8 @@ export default class ShareModel extends BaseModel<Share> {
 			.whereIn('item_id',
 				this.db('items')
 					.select('id')
-					.where('jop_share_id', '=', shareId)
+					.where('jop_share_id', '=', shareId),
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 			).groupBy('user_id') as any;
 	}
 

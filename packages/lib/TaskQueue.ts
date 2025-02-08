@@ -1,14 +1,18 @@
 import time from './time';
 import Setting from './models/Setting';
-import Logger from './Logger';
+import Logger, { LoggerWrapper } from '@joplin/utils/Logger';
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+type TaskCallback = ()=> Promise<any>;
 
 interface Task {
 	id: string;
-	callback: Function;
+	callback: TaskCallback;
 }
 
 interface TaskResult {
 	id: string;
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	result: any;
 	error?: Error;
 }
@@ -21,18 +25,38 @@ export default class TaskQueue {
 	private stopping_ = false;
 	private results_: Record<string, TaskResult> = {};
 	private name_: string;
-	private logger_: Logger;
+	private logger_: Logger | LoggerWrapper;
+	private concurrency_: number = null;
+	private keepTaskResults_ = true;
 
-	constructor(name: string, logger: Logger = null) {
+	public constructor(name: string, logger: Logger | LoggerWrapper = null) {
 		this.name_ = name;
 		this.logger_ = logger ? logger : new Logger();
 	}
 
-	concurrency() {
-		return Setting.value('sync.maxConcurrentConnections');
+	public concurrency() {
+		if (this.concurrency_ === null) {
+			return Setting.value('sync.maxConcurrentConnections');
+		} else {
+			return this.concurrency_;
+		}
 	}
 
-	push(id: string, callback: Function) {
+	public setConcurrency(v: number) {
+		this.concurrency_ = v;
+	}
+
+	public get keepTaskResults() {
+		return this.keepTaskResults_;
+	}
+
+	public set keepTaskResults(v: boolean) {
+		this.keepTaskResults_ = v;
+	}
+
+	// Using `push`, an unlimited number of tasks can be pushed, although only
+	// up to `concurrency` will run in parallel.
+	public push(id: string, callback: TaskCallback) {
 		if (this.stopping_) throw new Error('Cannot push task when queue is stopping');
 
 		this.waitingTasks_.push({
@@ -42,22 +66,32 @@ export default class TaskQueue {
 		this.processQueue_();
 	}
 
-	processQueue_() {
+	// Using `push`, only up to `concurrency` tasks can be pushed to the queue.
+	// Beyond this, the call will wait until a slot is available.
+	public async pushAsync(id: string, callback: TaskCallback) {
+		await this.waitForOneSlot();
+		this.push(id, callback);
+	}
+
+	private processQueue_() {
 		if (this.processingQueue_ || this.stopping_) return;
 
 		this.processingQueue_ = true;
 
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 		const completeTask = (task: Task, result: any, error: Error) => {
 			delete this.processingTasks_[task.id];
 
-			const r: TaskResult = {
-				id: task.id,
-				result: result,
-			};
+			if (this.keepTaskResults) {
+				const r: TaskResult = {
+					id: task.id,
+					result: result,
+				};
 
-			if (error) r.error = error;
+				if (error) r.error = error;
 
-			this.results_[task.id] = r;
+				this.results_[task.id] = r;
+			}
 
 			this.processQueue_();
 		};
@@ -68,11 +102,15 @@ export default class TaskQueue {
 			const task = this.waitingTasks_.splice(0, 1)[0];
 			this.processingTasks_[task.id] = task;
 
+			// We want to use then/catch here because we don't want to wait for
+			// the task to complete, but still want to capture the result.
 			task
 				.callback()
+				// eslint-disable-next-line promise/prefer-await-to-then, @typescript-eslint/no-explicit-any -- Old code before rule was applied
 				.then((result: any) => {
 					completeTask(task, result, null);
 				})
+				// eslint-disable-next-line promise/prefer-await-to-then
 				.catch((error: Error) => {
 					if (!error) error = new Error('Unknown error');
 					completeTask(task, null, error);
@@ -82,56 +120,77 @@ export default class TaskQueue {
 		this.processingQueue_ = false;
 	}
 
-	isWaiting(taskId: string) {
+	public isWaiting(taskId: string) {
 		return this.waitingTasks_.find(task => task.id === taskId);
 	}
 
-	isProcessing(taskId: string) {
+	public isProcessing(taskId: string) {
 		return taskId in this.processingTasks_;
 	}
 
-	isDone(taskId: string) {
+	public isDone(taskId: string) {
 		return taskId in this.results_;
 	}
 
-	async waitForAll() {
+	public async waitForAll() {
 		return new Promise((resolve) => {
 			const checkIID = setInterval(() => {
 				if (this.waitingTasks_.length) return;
-				if (this.processingTasks_.length) return;
+				if (Object.keys(this.processingTasks_).length) return;
 				clearInterval(checkIID);
 				resolve(null);
 			}, 100);
 		});
 	}
 
-	taskExists(taskId: string) {
+	public async waitForOneSlot() {
+		return new Promise((resolve) => {
+			const checkIID = setInterval(() => {
+				if (Object.keys(this.processingTasks_).length >= this.concurrency()) return;
+				clearInterval(checkIID);
+				resolve(null);
+			}, 100);
+		});
+	}
+
+	public taskExists(taskId: string) {
 		return this.isWaiting(taskId) || this.isProcessing(taskId) || this.isDone(taskId);
 	}
 
-	taskResult(taskId: string) {
+	public taskResult(taskId: string) {
 		if (!this.taskExists(taskId)) throw new Error(`No such task: ${taskId}`);
 		return this.results_[taskId];
 	}
 
-	async waitForResult(taskId: string) {
+	public async waitForResult(taskId: string): Promise<TaskResult> {
 		if (!this.taskExists(taskId)) throw new Error(`No such task: ${taskId}`);
 
-		while (true) {
-			const task = this.results_[taskId];
-			if (task) return task;
-			await time.sleep(0.1);
-		}
+		return new Promise(resolve => {
+			const check = () => {
+				const result = this.results_[taskId];
+				if (result) {
+					resolve(result);
+					return true;
+				}
+				return false;
+			};
+
+			if (check()) return;
+
+			const checkIID = setInterval(() => {
+				if (check()) clearInterval(checkIID);
+			}, 100);
+		});
 	}
 
-	async stop() {
+	public async stop() {
 		this.stopping_ = true;
 
 		this.logger_.info(`TaskQueue.stop: ${this.name_}: waiting for tasks to complete: ${Object.keys(this.processingTasks_).length}`);
 
 		// In general it's not a big issue if some tasks are still running because
 		// it won't call anything unexpected in caller code, since the caller has
-		// to explicitely retrieve the results
+		// to explicitly retrieve the results
 		const startTime = Date.now();
 		while (Object.keys(this.processingTasks_).length) {
 			await time.sleep(0.1);
@@ -144,7 +203,7 @@ export default class TaskQueue {
 		this.logger_.info(`TaskQueue.stop: ${this.name_}: Done, waited for ${Date.now() - startTime}`);
 	}
 
-	isStopping() {
+	public isStopping() {
 		return this.stopping_;
 	}
 }

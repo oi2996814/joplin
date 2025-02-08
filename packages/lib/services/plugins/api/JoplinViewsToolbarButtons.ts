@@ -1,3 +1,5 @@
+/* eslint-disable multiline-comment-style */
+
 import { ToolbarButtonLocation } from './types';
 import Plugin from '../Plugin';
 import ToolbarButtonController from '../ToolbarButtonController';
@@ -10,10 +12,12 @@ import createViewHandle from '../utils/createViewHandle';
  */
 export default class JoplinViewsToolbarButtons {
 
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	private store: any;
 	private plugin: Plugin;
 
-	constructor(plugin: Plugin, store: any) {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+	public constructor(plugin: Plugin, store: any) {
 		this.store = store;
 		this.plugin = plugin;
 	}
@@ -21,10 +25,12 @@ export default class JoplinViewsToolbarButtons {
 	/**
 	 * Creates a new toolbar button and associate it with the given command.
 	 */
-	async create(id: string, commandName: string, location: ToolbarButtonLocation) {
+	public async create(id: string, commandName: string, location: ToolbarButtonLocation) {
 		if (arguments.length < 3) {
 			this.plugin.deprecationNotice('1.5', 'Creating a view without an ID is deprecated. To fix it, change your call to `joplin.views.toolbarButtons.create("my-unique-id", ...)`', true);
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 			location = commandName as any;
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 			commandName = id as any;
 			id = `${this.plugin.viewCount}`;
 		}

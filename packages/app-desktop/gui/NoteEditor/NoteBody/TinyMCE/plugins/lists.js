@@ -886,7 +886,7 @@
         var parentLi = editor.dom.getParent(elm, 'li,dd,dt', getClosestListRootElm(editor, elm));
         return parentLi ? parentLi : elm;
       });
-      return DomQuery.unique(listItemsElms);
+      return [...new Set(listItemsElms)];
     };
     var getSelectedListItems = function (editor) {
       var selectedBlocks = editor.selection.getSelectedBlocks();
@@ -919,7 +919,7 @@
       var listRoots = map(lists, function (list) {
         return findLastParentListNode(editor, list).getOr(list);
       });
-      return DomQuery.unique(listRoots);
+      return [...new Set(listRoots)];
     };
 
     var shouldIndentOnTab = function (editor) {
@@ -1544,7 +1544,7 @@
         }
       });
       editor.addCommand('InsertJoplinChecklist', function (ui, detail) {
-        detail = Object.assign({}, detail, { listType: 'joplinChecklist' });
+        detail = { ...detail,  listType: 'joplinChecklist'  };
         ToggleList.toggleList(editor, 'UL', detail);
       });
     }
@@ -2078,6 +2078,17 @@
       setup(editor);
     };
 
+    var setup$2 = function (editor) {
+      var editorClickHandler = function (event) {
+        if (!isJoplinChecklistItem(event.target))
+          return;
+        if (event.offsetX >= 0)
+          return;
+        editor.execCommand('ToggleJoplinChecklistItem', false, { element: event.target });
+      };
+      editor.on('click', editorClickHandler);
+    };
+
     var findIndex = function (list, predicate) {
       for (var index = 0; index < list.length; index++) {
         var element = list[index];
@@ -2100,29 +2111,15 @@
           var listType = findContainerListTypeFromEvent(e);
           buttonApi.setActive(listType === options.listType && lists.length > 0 && lists[0].nodeName === listName && !isCustomList(lists[0]));
         };
-        var editorClickHandler = function (event) {
-          if (!isJoplinChecklistItem(event.target))
-            return;
-          if (event.offsetX >= 0)
-            return;
-          editor.execCommand('ToggleJoplinChecklistItem', false, { element: event.target });
-        };
-        if (options.listType === 'joplinChecklist') {
-          editor.on('click', editorClickHandler);
-        }
         editor.on('NodeChange', nodeChangeHandler);
         return function () {
-          if (options.listType === 'joplinChecklist') {
-            editor.off('click', editorClickHandler);
-          }
           editor.off('NodeChange', nodeChangeHandler);
         };
       };
     };
     var register$1 = function (editor) {
       var hasPlugin = function (editor, plugin) {
-        var plugins = editor.settings.plugins ? editor.settings.plugins : '';
-        return Tools.inArray(plugins.split(/[ ,]/), plugin) !== -1;
+        return editor.hasPlugin(plugin);
       };
       var _ = getLocalizationFunction(editor);
       var exec = function (command) {
@@ -2158,6 +2155,7 @@
     function Plugin () {
       PluginManager.add('joplinLists', function (editor) {
         setup$1(editor);
+        setup$2(editor);
         register$1(editor);
         register(editor);
         return get(editor);

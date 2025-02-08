@@ -2,6 +2,8 @@ import { CommandRuntime, CommandDeclaration, CommandContext } from '@joplin/lib/
 import { _ } from '@joplin/lib/locale';
 import layoutItemProp from '../../ResizableLayout/utils/layoutItemProp';
 import { AppState } from '../../../app.reducer';
+import { SidebarCommandRuntimeProps } from '../types';
+import bridge from '../../../services/bridge';
 
 export const declaration: CommandDeclaration = {
 	name: 'focusElementSideBar',
@@ -9,20 +11,15 @@ export const declaration: CommandDeclaration = {
 	parentLabel: () => _('Focus'),
 };
 
-export const runtime = (comp: any): CommandRuntime => {
+export const runtime = (props: SidebarCommandRuntimeProps): CommandRuntime => {
 	return {
 		execute: async (context: CommandContext) => {
 			const sidebarVisible = layoutItemProp((context.state as AppState).mainLayout, 'sideBar', 'visible');
 
 			if (sidebarVisible) {
-				const item = comp.selectedItem();
-				if (item) {
-					const anchorRef = comp.anchorItemRefs[item.type][item.id];
-					if (anchorRef) anchorRef.current.focus();
-				} else {
-					const anchorRef = comp.firstAnchorItemRef('folder');
-					if (anchorRef) anchorRef.current.focus();
-				}
+				props.focusSidebar();
+				// The sidebar is only present in the main window:
+				bridge().switchToMainWindow();
 			}
 		},
 

@@ -3,27 +3,34 @@ import BaseItem from '../../models/BaseItem';
 import Note from '../../models/Note';
 import { expectNotThrow, expectThrow, setupDatabaseAndSynchronizer, switchClient } from '../../testing/test-utils';
 import time from '../../time';
-import ItemUploader, { ApiCallFunction } from './ItemUploader';
+import ItemUploader from './ItemUploader';
+import { ApiCallFunction } from './utils/types';
 
 interface ApiCall {
 	name: string;
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	args: any[];
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 function clearArray(a: any[]) {
 	a.splice(0, a.length);
 }
 
 function newFakeApi(): FileApi {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	return { supportsMultiPut: true } as any;
 }
 
+// eslint-disable-next-line @typescript-eslint/ban-types -- Old code before rule was applied
 function newFakeApiCall(callRecorder: ApiCall[], itemBodyCallback: Function = null): ApiCallFunction {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	const apiCall = async (callName: string, ...args: any[]): Promise<any> => {
 		callRecorder.push({ name: callName, args });
 
 		if (callName === 'multiPut') {
 			const [batch] = args;
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 			const output: any = { items: {} };
 			for (const item of batch) {
 				if (itemBodyCallback) {
@@ -41,13 +48,12 @@ function newFakeApiCall(callRecorder: ApiCall[], itemBodyCallback: Function = nu
 	return apiCall;
 }
 
-describe('synchronizer/ItemUploader', function() {
+describe('synchronizer/ItemUploader', () => {
 
-	beforeEach(async (done) => {
+	beforeEach(async () => {
 		await setupDatabaseAndSynchronizer(1);
 		await setupDatabaseAndSynchronizer(2);
 		await switchClient(1);
-		done();
 	});
 
 	it('should batch uploads and use the cache afterwards', (async () => {
@@ -111,7 +117,7 @@ describe('synchronizer/ItemUploader', function() {
 		expect(callRecorder.length).toBe(0);
 
 		await time.msleep(1);
-		notes[1] = await Note.save({ title: '22' }),
+		notes[1] = await Note.save({ title: '22' });
 		await itemUploader.serializeAndUploadItem(Note, BaseItem.systemPath(notes[1]), notes[1]);
 		expect(callRecorder.length).toBe(1);
 	}));
@@ -147,6 +153,7 @@ describe('synchronizer/ItemUploader', function() {
 		];
 
 		// Simulates throwing an error on note 2
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 		const itemBodyCallback = (item: any): any => {
 			if (item.name === BaseItem.systemPath(notes[1])) {
 				return { error: new Error('Could not save item'), item: null };
@@ -160,7 +167,7 @@ describe('synchronizer/ItemUploader', function() {
 		await itemUploader.preUploadItems(notes);
 
 		await expectNotThrow(async () => itemUploader.serializeAndUploadItem(Note, BaseItem.systemPath(notes[0]), notes[0]));
-		await expectThrow(async () => itemUploader.serializeAndUploadItem(Note, BaseItem.systemPath(notes[1]), notes[1]));
+		await expectThrow(async () => itemUploader.serializeAndUploadItem(Note, BaseItem.systemPath(notes[1]), notes[1]), null);
 		await expectNotThrow(async () => itemUploader.serializeAndUploadItem(Note, BaseItem.systemPath(notes[2]), notes[2]));
 	}));
 

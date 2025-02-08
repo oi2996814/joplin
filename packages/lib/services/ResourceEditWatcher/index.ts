@@ -2,16 +2,21 @@ import AsyncActionQueue from '../../AsyncActionQueue';
 import shim from '../../shim';
 import { _ } from '../../locale';
 import { toSystemSlashes } from '../../path-utils';
-import Logger from '../../Logger';
+import Logger from '@joplin/utils/Logger';
 import Setting from '../../models/Setting';
 import Resource from '../../models/Resource';
+import { ResourceEntity } from '../database/types';
 const EventEmitter = require('events');
 const chokidar = require('chokidar');
 
+type WindowId = string;
+
 interface WatchedItem {
 	resourceId: string;
+	title: string;
 	lastFileUpdatedTime: number;
 	lastResourceUpdatedTime: number;
+	watchedByWindows: WindowId[];
 	path: string;
 	asyncSaveQueue: AsyncActionQueue;
 	size: number;
@@ -22,21 +27,28 @@ interface WatchedItems {
 }
 
 type OpenItemFn = (path: string)=> void;
+type GetWindowIdFn = ()=> string;
 
 export default class ResourceEditWatcher {
 
 	private static instance_: ResourceEditWatcher;
 
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	private logger_: any;
+	// eslint-disable-next-line @typescript-eslint/ban-types -- Old code before rule was applied
 	private dispatch: Function;
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	private watcher_: any;
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	private chokidar_: any;
 	private watchedItems_: WatchedItems = {};
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	private eventEmitter_: any;
-	private tempDir_: string = '';
+	private tempDir_ = '';
 	private openItem_: OpenItemFn;
+	private getActiveWindowId_: GetWindowIdFn;
 
-	constructor() {
+	public constructor() {
 		this.logger_ = new Logger();
 		this.dispatch = () => {};
 		this.watcher_ = null;
@@ -44,13 +56,15 @@ export default class ResourceEditWatcher {
 		this.eventEmitter_ = new EventEmitter();
 	}
 
-	initialize(logger: any, dispatch: Function, openItem: OpenItemFn) {
+	// eslint-disable-next-line @typescript-eslint/ban-types, @typescript-eslint/no-explicit-any -- Old code before rule was applied, Old code before rule was applied
+	public initialize(logger: any, dispatch: Function, openItem: OpenItemFn, getWindowId: GetWindowIdFn) {
 		this.logger_ = logger;
 		this.dispatch = dispatch;
 		this.openItem_ = openItem;
+		this.getActiveWindowId_ = getWindowId;
 	}
 
-	static instance() {
+	public static instance() {
 		if (this.instance_) return this.instance_;
 		this.instance_ = new ResourceEditWatcher();
 		return this.instance_;
@@ -65,29 +79,35 @@ export default class ResourceEditWatcher {
 		return this.tempDir_;
 	}
 
-	logger() {
+	public logger() {
 		return this.logger_;
 	}
 
-	on(eventName: string, callback: Function) {
+	// eslint-disable-next-line @typescript-eslint/ban-types -- Old code before rule was applied
+	public on(eventName: string, callback: Function) {
 		return this.eventEmitter_.on(eventName, callback);
 	}
 
-	off(eventName: string, callback: Function) {
+	// eslint-disable-next-line @typescript-eslint/ban-types -- Old code before rule was applied
+	public off(eventName: string, callback: Function) {
 		return this.eventEmitter_.removeListener(eventName, callback);
 	}
 
-	externalApi() {
+	public externalApi() {
 		return {
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 			openAndWatch: async ({ resourceId }: any) => {
 				return this.openAndWatch(resourceId);
 			},
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 			watch: async ({ resourceId }: any) => {
 				await this.watch(resourceId);
 			},
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 			stopWatching: async ({ resourceId }: any) => {
 				return this.stopWatching(resourceId);
 			},
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 			isWatched: async ({ resourceId }: any) => {
 				return !!this.watchedItemByResourceId(resourceId);
 			},
@@ -146,7 +166,7 @@ export default class ResourceEditWatcher {
 				//
 				// We also need this because some events are handled twice - once in the "all" event
 				// handle and once in the "raw" event handler, due to a bug in chokidar. So having
-				// this check means we don't unecessarily save the resource twice when the file is
+				// this check means we don't unnecessarily save the resource twice when the file is
 				// modified by the user.
 				this.logger().debug(`ResourceEditWatcher: No timestamp and file size change - skip: ${resourceId}`);
 				return;
@@ -165,6 +185,7 @@ export default class ResourceEditWatcher {
 				// times per seconds, even when nothing is changed.
 				useFsEvents: false,
 			});
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 			this.watcher_.on('all', (event: any, path: string) => {
 				path = path ? toSystemSlashes(path, 'linux') : '';
 
@@ -192,8 +213,8 @@ export default class ResourceEditWatcher {
 			// that event is not event triggered.
 			// https://github.com/laurent22/joplin/issues/3407
 			//
-			// @ts-ignore Leave unused path variable
-			this.watcher_.on('raw', (event: string, path: string, options: any) => {
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+			this.watcher_.on('raw', (event: string, _path: string, options: any) => {
 				const watchedPath = options.watchedPath ? toSystemSlashes(options.watchedPath, 'linux') : '';
 
 				this.logger().debug(`ResourceEditWatcher: Raw event: ${event}: ${watchedPath}`);
@@ -210,7 +231,22 @@ export default class ResourceEditWatcher {
 		return this.watcher_;
 	}
 
+	private async makeEditPath(resource: ResourceEntity) {
+		const tempDir = await this.tempDir();
+		return toSystemSlashes(await shim.fsDriver().findUniqueFilename(`${tempDir}/${Resource.friendlySafeFilename(resource)}`), 'linux');
+	}
+
+	private async copyResourceToEditablePath(resourceId: string) {
+		const resource = await Resource.load(resourceId);
+		if (!(await Resource.isReady(resource))) throw new Error(_('This attachment is not downloaded or not decrypted yet'));
+		const sourceFilePath = Resource.fullPath(resource);
+		const editFilePath = await this.makeEditPath(resource);
+		await shim.fsDriver().copy(sourceFilePath, editFilePath);
+		return { resource, editFilePath };
+	}
+
 	private async watch(resourceId: string): Promise<WatchedItem> {
+		const sourceWindowId = this.getActiveWindowId_();
 		let watchedItem = this.watchedItemByResourceId(resourceId);
 
 		if (!watchedItem) {
@@ -218,27 +254,27 @@ export default class ResourceEditWatcher {
 
 			watchedItem = {
 				resourceId: resourceId,
+				title: '',
 				lastFileUpdatedTime: 0,
 				lastResourceUpdatedTime: 0,
+				watchedByWindows: [sourceWindowId],
 				asyncSaveQueue: new AsyncActionQueue(1000),
 				path: '',
 				size: -1,
 			};
 
 			this.watchedItems_[resourceId] = watchedItem;
-
-			const resource = await Resource.load(resourceId);
-			if (!(await Resource.isReady(resource))) throw new Error(_('This attachment is not downloaded or not decrypted yet'));
-			const sourceFilePath = Resource.fullPath(resource);
-			const tempDir = await this.tempDir();
-			const editFilePath = toSystemSlashes(await shim.fsDriver().findUniqueFilename(`${tempDir}/${Resource.friendlySafeFilename(resource)}`), 'linux');
-			await shim.fsDriver().copy(sourceFilePath, editFilePath);
+			const { resource, editFilePath } = await this.copyResourceToEditablePath(resourceId);
 			const stat = await shim.fsDriver().stat(editFilePath);
 
 			watchedItem.path = editFilePath;
 			watchedItem.lastFileUpdatedTime = stat.mtime.getTime();
 			watchedItem.lastResourceUpdatedTime = resource.updated_time;
 			watchedItem.size = stat.size;
+			watchedItem.title = resource.title;
+			// Reset the watching window list to handle the case where the active window
+			// was changed while loading the resource.
+			watchedItem.watchedByWindows = [this.getActiveWindowId_()];
 
 			this.watchFile(editFilePath);
 
@@ -246,6 +282,18 @@ export default class ResourceEditWatcher {
 				type: 'RESOURCE_EDIT_WATCHER_SET',
 				id: resource.id,
 				title: resource.title,
+			});
+		} else if (!watchedItem.watchedByWindows.includes(sourceWindowId)) {
+			watchedItem = {
+				...this.watchedItems_[resourceId],
+				watchedByWindows: [...watchedItem.watchedByWindows, sourceWindowId],
+			};
+			this.watchedItems_[resourceId] = watchedItem;
+
+			this.dispatch({
+				type: 'RESOURCE_EDIT_WATCHER_SET',
+				id: watchedItem.resourceId,
+				title: watchedItem.title,
 			});
 		}
 
@@ -256,11 +304,19 @@ export default class ResourceEditWatcher {
 
 	public async openAndWatch(resourceId: string) {
 		const watchedItem = await this.watch(resourceId);
-		// bridge().openItem(watchedItem.path);
 		this.openItem_(watchedItem.path);
 	}
 
-	async stopWatching(resourceId: string) {
+	// This call simply copies the resource file to a separate path and opens it.
+	// That way, even if it is changed, the real resource file on drive won't be
+	// affected.
+	public async openAsReadOnly(resourceId: string) {
+		const { editFilePath } = await this.copyResourceToEditablePath(resourceId);
+		await shim.fsDriver().chmod(editFilePath, 0o0666);
+		this.openItem_(editFilePath);
+	}
+
+	public async stopWatching(resourceId: string) {
 		if (!resourceId) return;
 
 		const item = this.watchedItemByResourceId(resourceId);
@@ -269,7 +325,7 @@ export default class ResourceEditWatcher {
 			return;
 		}
 
-		await item.asyncSaveQueue.waitForAllDone();
+		await item.asyncSaveQueue.processAllNow();
 
 		try {
 			if (this.watcher_) this.watcher_.unwatch(item.path);
@@ -288,16 +344,26 @@ export default class ResourceEditWatcher {
 		this.logger().info(`ResourceEditWatcher: Stopped watching ${item.path}`);
 	}
 
-	public async stopWatchingAll() {
+	public async stopWatchingAll(sourceWindow: string) {
 		const promises = [];
 		for (const resourceId in this.watchedItems_) {
-			const item = this.watchedItems_[resourceId];
-			promises.push(this.stopWatching(item.resourceId));
+			let item = this.watchedItems_[resourceId];
+
+			if (item.watchedByWindows.includes(sourceWindow)) {
+				const otherWatchingWindows = item.watchedByWindows.filter(id => id !== sourceWindow);
+				item = { ...item, watchedByWindows: otherWatchingWindows };
+				this.watchedItems_[resourceId] = item;
+			}
+
+			if (item.watchedByWindows.length === 0) {
+				promises.push(this.stopWatching(item.resourceId));
+			}
 		}
 		await Promise.all(promises);
 
 		this.dispatch({
 			type: 'RESOURCE_EDIT_WATCHER_CLEAR',
+			windowId: sourceWindow,
 		});
 	}
 

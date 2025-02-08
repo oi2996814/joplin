@@ -2,9 +2,9 @@ import { DbConnection, connectDb, disconnectDb, truncateTables } from '../../db'
 import { User, Session, Item, Uuid } from '../../services/database/types';
 import { createDb, CreateDbOptions } from '../../tools/dbTools';
 import modelFactory from '../../models/factory';
-import { AppContext, Env } from '../types';
+import { AppContext, DatabaseConfigClient, Env } from '../types';
 import config, { initConfig } from '../../config';
-import Logger from '@joplin/lib/Logger';
+import Logger from '@joplin/utils/Logger';
 import FakeCookies from './koa/FakeCookies';
 import FakeRequest from './koa/FakeRequest';
 import FakeResponse from './koa/FakeResponse';
@@ -15,21 +15,24 @@ import * as fs from 'fs-extra';
 import * as jsdom from 'jsdom';
 import setupAppContext from '../setupAppContext';
 import { ApiError } from '../errors';
-import { getApi, putApi } from './apiUtils';
+import { deleteApi, getApi, putApi } from './apiUtils';
 import { FolderEntity, NoteEntity, ResourceEntity } from '@joplin/lib/services/database/types';
 import { ModelType } from '@joplin/lib/BaseModel';
 import { initializeJoplinUtils } from '../joplinUtils';
 import MustacheService from '../../services/MustacheService';
-import uuidgen from '../uuidgen';
+import { uuidgen } from '@joplin/lib/uuid';
 import { createCsrfToken } from '../csrf';
 import { cookieSet } from '../cookies';
 import { parseEnv } from '../../env';
+import { URL } from 'url';
+import initLib from '@joplin/lib/initLib';
 
 // Takes into account the fact that this file will be inside the /dist directory
 // when it runs.
-const packageRootDir = path.dirname(path.dirname(path.dirname(__dirname)));
+export const packageRootDir = path.dirname(path.dirname(path.dirname(__dirname)));
 
 let db_: DbConnection = null;
+let dbSlave_: DbConnection = null;
 
 // require('source-map-support').install();
 
@@ -63,35 +66,59 @@ export async function makeTempFileWithContent(content: string | Buffer): Promise
 function initGlobalLogger() {
 	const globalLogger = new Logger();
 	Logger.initializeGlobalLogger(globalLogger);
+	initLib(globalLogger);
 }
 
+export const getDatabaseClientType = () => {
+	if (process.env.JOPLIN_TESTS_SERVER_DB === 'pg') return DatabaseConfigClient.PostgreSQL;
+	return DatabaseConfigClient.SQLite;
+};
+
 let createdDbPath_: string = null;
+let createdDbSlavePath_: string = null;
 export async function beforeAllDb(unitName: string, createDbOptions: CreateDbOptions = null) {
 	unitName = unitName.replace(/\//g, '_');
 
+	const useDbSlave = createDbOptions?.envValues && createDbOptions?.envValues.DB_USE_SLAVE === '1';
+
 	createdDbPath_ = `${packageRootDir}/db-test-${unitName}.sqlite`;
+	await fs.remove(createdDbPath_);
+
+	createdDbSlavePath_ = `${packageRootDir}/db-slave-test-${unitName}.sqlite`;
+	await fs.remove(createdDbSlavePath_);
 
 	const tempDir = `${packageRootDir}/temp/test-${unitName}`;
 	await fs.mkdirp(tempDir);
 
-	// Uncomment the code below to run the test units with Postgres. Run this:
+	// To run the test units with Postgres. Run this:
 	//
-	// sudo docker compose -f docker-compose.db-dev.yml up
+	// docker compose -f docker-compose.db-dev.yml up
+	//
+	// JOPLIN_TESTS_SERVER_DB=pg yarn test
 
-	if (process.env.JOPLIN_TESTS_SERVER_DB === 'pg') {
+	if (getDatabaseClientType() === DatabaseConfigClient.PostgreSQL) {
 		await initConfig(Env.Dev, parseEnv({
 			DB_CLIENT: 'pg',
+
 			POSTGRES_DATABASE: unitName,
 			POSTGRES_USER: 'joplin',
 			POSTGRES_PASSWORD: 'joplin',
+
+			SLAVE_POSTGRES_DATABASE: unitName,
+			SLAVE_POSTGRES_USER: 'joplin',
+			SLAVE_POSTGRES_PASSWORD: 'joplin',
+
 			SUPPORT_EMAIL: 'testing@localhost',
+			...createDbOptions?.envValues,
 		}), {
 			tempDir: tempDir,
 		});
 	} else {
 		await initConfig(Env.Dev, parseEnv({
 			SQLITE_DATABASE: createdDbPath_,
+			SLAVE_SQLITE_DATABASE: createdDbSlavePath_,
 			SUPPORT_EMAIL: 'testing@localhost',
+			...createDbOptions?.envValues,
 		}), {
 			tempDir: tempDir,
 		});
@@ -102,16 +129,32 @@ export async function beforeAllDb(unitName: string, createDbOptions: CreateDbOpt
 	await createDb(config().database, { dropIfExists: true, ...createDbOptions });
 	db_ = await connectDb(config().database);
 
+	if (useDbSlave) {
+		await createDb(config().databaseSlave, { dropIfExists: true, ...createDbOptions });
+		dbSlave_ = await connectDb(config().databaseSlave);
+	} else {
+		dbSlave_ = db_;
+	}
+
 	const mustache = new MustacheService(config().viewDir, config().baseUrl);
 	await mustache.loadPartials();
 
 	await initializeJoplinUtils(config(), models(), mustache);
 }
 
+export const createdDbPath = () => {
+	return createdDbPath_;
+};
+
 export async function afterAllTests() {
 	if (db_) {
 		await disconnectDb(db_);
 		db_ = null;
+	}
+
+	if (dbSlave_) {
+		await disconnectDb(dbSlave_);
+		dbSlave_ = null;
 	}
 
 	if (tempDir_) {
@@ -132,6 +175,7 @@ export async function beforeEachDb() {
 export interface AppContextTestOptions {
 	// owner?: User;
 	sessionId?: string;
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	request?: any;
 }
 
@@ -196,10 +240,12 @@ export async function koaAppContext(options: AppContextTestOptions = null): Prom
 
 	const appLogger = Logger.create('AppTest');
 
-	const baseAppContext = await setupAppContext({} as any, Env.Dev, db_, () => appLogger);
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+	const baseAppContext = await setupAppContext({} as any, Env.Dev, db_, dbSlave_, () => appLogger);
 
 	// Set type to "any" because the Koa context has many properties and we
 	// don't need to mock all of them.
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	const appContext: any = {
 		baseAppContext,
 		joplin: {
@@ -218,7 +264,7 @@ export async function koaAppContext(options: AppContextTestOptions = null): Prom
 		query: req.query,
 		method: req.method,
 		redirect: () => {},
-		URL: { origin: config().baseUrl },
+		URL: new URL(config().baseUrl), // origin
 	};
 
 	if (options.sessionId) {
@@ -234,7 +280,7 @@ export function koaNext(): Promise<void> {
 
 export const testAssetDir = `${packageRootDir}/assets/tests`;
 
-interface UserAndSession {
+export interface UserAndSession {
 	user: User;
 	session: Session;
 	password: string;
@@ -244,8 +290,16 @@ export function db() {
 	return db_;
 }
 
+export function dbSlave() {
+	return dbSlave_;
+}
+
+export function dbSlaveSync() {
+
+}
+
 export function models() {
-	return modelFactory(db(), config());
+	return modelFactory(db(), dbSlave(), config());
 }
 
 export function parseHtml(html: string): Document {
@@ -258,7 +312,7 @@ interface CreateUserAndSessionOptions {
 	password?: string;
 }
 
-export const createUserAndSession = async function(index: number = 1, isAdmin: boolean = false, options: CreateUserAndSessionOptions = null): Promise<UserAndSession> {
+export const createUserAndSession = async function(index = 1, isAdmin = false, options: CreateUserAndSessionOptions = null): Promise<UserAndSession> {
 	const password = uuidgen();
 
 	options = {
@@ -277,14 +331,16 @@ export const createUserAndSession = async function(index: number = 1, isAdmin: b
 	};
 };
 
-export const createUser = async function(index: number = 1, isAdmin: boolean = false): Promise<User> {
+export const createUser = async function(index = 1, isAdmin = false): Promise<User> {
 	return models().user().save({ email: `user${index}@localhost`, password: '123456', is_admin: isAdmin ? 1 : 0 }, { skipValidation: true });
 };
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 export async function createItemTree(userId: Uuid, parentFolderId: string, tree: any): Promise<void> {
 	const itemModel = models().item();
 
 	for (const jopId in tree) {
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 		const children: any = tree[jopId];
 		const isFolder = children !== null;
 
@@ -315,6 +371,7 @@ export async function createItemTree(userId: Uuid, parentFolderId: string, tree:
 // 	}
 // }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 export async function createItemTree3(userId: Uuid, parentFolderId: string, shareId: Uuid, tree: any[]): Promise<void> {
 	const itemModel = models().item();
 	const user = await models().user().load(userId);
@@ -349,6 +406,10 @@ export async function updateItem(sessionId: string, path: string, content: strin
 	return models().item().load(item.id);
 }
 
+export async function deleteItem(sessionId: string, jopId: string): Promise<void> {
+	await deleteApi(sessionId, `items/root:/${jopId}.md:`);
+}
+
 export async function createNote(sessionId: string, note: NoteEntity): Promise<Item> {
 	note = {
 		id: '00000000000000000000000000000001',
@@ -364,8 +425,18 @@ export async function updateNote(sessionId: string, note: NoteEntity): Promise<I
 	return updateItem(sessionId, `root:/${note.id}.md:`, makeNoteSerializedBody(note));
 }
 
+export async function deleteNote(userId: Uuid, noteJopId: string): Promise<void> {
+	const item = await models().item().loadByJopId(userId, noteJopId, { fields: ['id'] });
+	await models().item().delete(item.id);
+}
+
 export async function updateFolder(sessionId: string, folder: FolderEntity): Promise<Item> {
 	return updateItem(sessionId, `root:/${folder.id}.md:`, makeFolderSerializedBody(folder));
+}
+
+export async function deleteFolder(userId: string, folderJopId: string): Promise<void> {
+	const item = await models().item().loadByJopId(userId, folderJopId, { fields: ['id'] });
+	await models().item().delete(item.id);
 }
 
 export async function createFolder(sessionId: string, folder: FolderEntity): Promise<Item> {
@@ -434,6 +505,7 @@ export function readCredentialFileSync(filename: string, defaultValue: string = 
 	return r.toString();
 }
 
+// eslint-disable-next-line @typescript-eslint/ban-types, @typescript-eslint/no-explicit-any -- Old code before rule was applied, Old code before rule was applied
 export async function checkThrowAsync(asyncFn: Function): Promise<any> {
 	try {
 		await asyncFn();
@@ -443,6 +515,7 @@ export async function checkThrowAsync(asyncFn: Function): Promise<any> {
 	return null;
 }
 
+// eslint-disable-next-line @typescript-eslint/ban-types, @typescript-eslint/no-explicit-any -- Old code before rule was applied, Old code before rule was applied
 export async function expectThrow(asyncFn: Function, errorCode: any = undefined): Promise<any> {
 	let hasThrown = false;
 	let thrownError = null;
@@ -465,7 +538,8 @@ export async function expectThrow(asyncFn: Function, errorCode: any = undefined)
 	return thrownError;
 }
 
-export async function expectHttpError(asyncFn: Function, expectedHttpCode: number): Promise<void> {
+// eslint-disable-next-line @typescript-eslint/ban-types -- Old code before rule was applied
+export async function expectHttpError(asyncFn: Function, expectedHttpCode: number, expectedErrorCode: string = null): Promise<void> {
 	let thrownError = null;
 
 	try {
@@ -478,9 +552,14 @@ export async function expectHttpError(asyncFn: Function, expectedHttpCode: numbe
 		expect('not throw').toBe('throw');
 	} else {
 		expect(thrownError.httpCode).toBe(expectedHttpCode);
+
+		if (expectedErrorCode !== null) {
+			expect(thrownError.code).toBe(expectedErrorCode);
+		}
 	}
 }
 
+// eslint-disable-next-line @typescript-eslint/ban-types -- Old code before rule was applied
 export async function expectNoHttpError(asyncFn: Function): Promise<void> {
 	let thrownError = null;
 
@@ -528,6 +607,8 @@ is_shared: 1
 share_id: ${note.share_id || ''}
 conflict_original_id: 
 master_key_id: 
+user_data: 
+deleted_time: 0
 type_: 1`;
 }
 
@@ -544,11 +625,21 @@ encryption_applied: 0
 parent_id: ${folder.parent_id || ''}
 is_shared: 0
 share_id: ${folder.share_id || ''}
+user_data: 
 type_: 2`;
 }
 
 export function makeResourceSerializedBody(resource: ResourceEntity = {}): string {
-	return `Test Resource
+	resource = {
+		id: randomHash(),
+		mime: 'plain/text',
+		file_extension: 'txt',
+		size: 0,
+		title: 'Test Resource',
+		...resource,
+	};
+
+	return `${resource.title}
 
 id: ${resource.id}
 mime: ${resource.mime}
@@ -567,6 +658,7 @@ is_shared: 0
 type_: 4`;
 }
 
+// eslint-disable-next-line @typescript-eslint/ban-types -- Old code before rule was applied
 export async function expectNotThrow(asyncFn: Function) {
 	let thrownError = null;
 	try {

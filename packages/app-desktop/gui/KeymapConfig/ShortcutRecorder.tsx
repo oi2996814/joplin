@@ -39,9 +39,16 @@ export const ShortcutRecorder = ({ onSave, onReset, onCancel, onError, initialAc
 			onError({ recorderError });
 			setSaveAllowed(false);
 		}
+		// eslint-disable-next-line @seiyab/react-hooks/exhaustive-deps -- Old code before rule was applied
 	}, [accelerator]);
 
 	const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+		// Shift-tab and tab are needed for navigating the shortcuts screen with the keyboard. Do not
+		// .preventDefault.
+		if (event.code === 'Tab' && !event.metaKey && !event.altKey && !event.ctrlKey) {
+			return;
+		}
+
 		event.preventDefault();
 		const newAccelerator = keymapService.domToElectronAccelerator(event);
 
@@ -59,14 +66,25 @@ export const ShortcutRecorder = ({ onSave, onReset, onCancel, onError, initialAc
 		}
 	};
 
+	const hintText = _('Press the shortcut and then press ENTER. Or, press BACKSPACE to clear the shortcut.');
+	const placeholderText = _('Press the shortcut');
+
 	return (
-		<div style={styles.recorderContainer}>
+		<div className='shortcut-recorder' style={styles.recorderContainer}>
 			<input
+				className='shortcut text-input'
+
 				value={accelerator}
-				placeholder={_('Press the shortcut')}
+				aria-label={accelerator ? accelerator : placeholderText}
+				placeholder={placeholderText}
+				title={hintText}
+				aria-description={hintText}
+				aria-invalid={accelerator && !saveAllowed}
+				// With readOnly, aria-live polite seems necessary for screen readers to read
+				// the shortcut as it updates.
+				aria-live='polite'
+
 				onKeyDown={handleKeyDown}
-				style={styles.recorderInput}
-				title={_('Press the shortcut and then press ENTER. Or, press BACKSPACE to clear the shortcut.')}
 				readOnly
 				autoFocus
 			/>

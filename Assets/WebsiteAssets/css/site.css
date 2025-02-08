@@ -307,7 +307,7 @@ p,
 div.navbar-mobile-content a.sponsor-button {
 	padding: 4px 12px;
 	font-size: 0.9em;
-	margin-right: 1em;
+	margin-right: 0.5em;
 }
 
 #nav-section.white-bg a {
@@ -399,12 +399,12 @@ div.navbar-mobile-content a.sponsor-button {
 	margin: auto;
 }
 
-#top-section-img {
+.top-section-img {
 	margin-bottom: -280px;
 	margin-top: 40px;
 }
 
-#top-section-img img {
+.top-section-img img {
 	width: 100%;
 }
 
@@ -657,6 +657,40 @@ footer .bottom-links-row p {
 	font-size: 1.1em;
 }
 
+.language-switcher {
+	display: inline;
+}
+
+.language-switcher > button {
+	border: none;
+	background-color: transparent;
+	color: #0557ba;
+}
+
+.joplin-cloud-feature-list .feature-description {
+	max-width: 600px;
+    font-size: .8em;
+    color: #555555;
+	margin-top: 5px;
+}
+
+.joplin-cloud-feature-list .feature-title {
+	text-decoration: none;
+	color: #000000;
+	margin-left: 10px;
+    border: 2px solid black;
+    display: inline-block;
+    width: 20px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 100px;
+    height: 20px;
+    font-weight: bold;
+    font-size: 0.8em;
+    opacity: 0.5;
+}
+
 /*****************************************************************
  WHAT'S NEW PAGE
 *****************************************************************/
@@ -670,9 +704,9 @@ footer .bottom-links-row p {
     margin-right: auto;
 }
 
-.news-page     img,
-.news-item-page img {
-	max-width: 650px;
+.news-page .main-content img,
+.news-item-page .main-content img {
+	max-width: 100%;
 }
 
 /*****************************************************************
@@ -729,6 +763,33 @@ footer .bottom-links-row p {
 }
 
 /*****************************************************************
+ LARGE VIEW
+*****************************************************************/
+
+@media (max-width: 1200px) {
+	#nav-section a {
+		margin-left: 10px;
+	}
+}
+
+/*****************************************************************
+ MEDIUM VIEW
+ - Make menu bar elements smaller and closer to each others
+   so that everything fit.
+*****************************************************************/
+
+@media (max-width: 990px) {
+	#nav-section > .container {
+		max-width: 960px;
+	}
+
+	#nav-section .button-link {
+		padding: 4px 10px;
+		font-size: 15px;
+	}
+}
+
+/*****************************************************************
  NARROW VIEW
  - Top right menu is displayed
  - Sections are changed: columns with text, then button, then image
@@ -738,6 +799,24 @@ footer .bottom-links-row p {
 		position: relative;
 		min-height: 100vh;
 		padding-bottom: 130px;
+	}
+
+	#menu-mobile .social-links {
+		display: flex;
+		justify-content: center;
+		margin-top: 20px;
+	}
+
+	#menu-mobile .social-links a {
+		margin-left: 15px;
+		font-size: 20px;
+	}
+
+	#menu-mobile .social-links .social-link-mastodon,
+	#menu-mobile .social-links .social-link-lemmy,
+	#menu-mobile .social-links .social-link-linkedin,
+	#menu-mobile .social-links .social-link-patreon {
+		display: none;
 	}
 
 	.front-page h1 {
@@ -857,7 +936,7 @@ footer .bottom-links-row p {
 	}
 
 	#menu-mobile .button-link {
-		padding: 10px 15px;
+		padding: 4px 12px;
 		font-size: 16px;
 		margin-left: 0px;
 	}
@@ -876,7 +955,7 @@ footer .bottom-links-row p {
 		padding-top: 80px;
 	}
 
-	#top-section-img {
+	.top-section-img {
 		margin-bottom: -90px;
 		margin-top: 50px;
 	}
@@ -901,6 +980,73 @@ footer .bottom-links-row p {
 		padding-top: 30px;
 		padding-bottom: 30px;
 	}
+}
+
+/*****************************************************************
+ MORE NARROW VIEW
+ eg for Galaxy S9
+*****************************************************************/
+
+@media (max-width: 580px) {
+
+	#nav-section .plans-button {
+		display: none;
+	}
+
+}
+
+/*****************************************************************
+ MORE NARROW VIEW
+ eg for Galaxy S9
+*****************************************************************/
+
+@media (max-width: 400px) {
+
+	#nav-section .navbar-mobile-content a.sponsor-button .sponsor-button-label {
+		font-size: 12px;
+	}
+
+	#nav-section .navbar-mobile-content a.sponsor-button {
+		padding: 2px 6px;
+		margin-right: 0.2em;
+	}
+
+	#nav-section a {
+		margin-left: 5px;
+	}
+
+}
+
+/*****************************************************************
+ VERY NARROW VIEW
+ eg for Galaxy Fold
+*****************************************************************/
+
+@media (max-width: 350px) {
+
+	#nav-section .navbar-mobile-content a.sponsor-button {
+		background-color: transparent;
+		color: #0557ba !important;
+		font-size: 18px;
+	}
+
+	#nav-section .navbar-mobile-content a.sponsor-button .sponsor-button-label {
+		display: none;
+	}
+
+	#nav-section a {
+		margin-left: 4px;
+	}
+
+	div.navbar-mobile-content a.sponsor-button {
+		margin-right: 10px;
+	}
+
+	#nav-section .button-link {
+		padding-left: 0;
+		padding-right: 0;
+	}
+
 }
 
 /*****************************************************************
@@ -1020,6 +1166,10 @@ footer .bottom-links-row p {
 	display: none;
 }
 
+.joplin-cloud-feature-list table {
+	width: 100%;
+}
+
 .price-row .plan-type {
 	display: flex;
 	align-items: center;
@@ -1097,7 +1247,7 @@ footer .bottom-links-row p {
 		background-position: bottom;
 		padding-bottom: 160px;
 	}
-	#top-section-img {
+	.top-section-img {
 		margin-bottom: -240px;
 		margin-top: 130px;
 	}
@@ -1124,4 +1274,30 @@ footer .bottom-links-row p {
 		font-size: 18px;
 		margin-top: -15p;
 	}
+}
+
+/*****************************************************************
+ ENGLISH VERSION
+*****************************************************************/
+
+:lang(en-gb) #made-in-france-section {
+	display: none;
+}
+
+:lang(en-gb) .top-section-img-cn {
+	display: none;
+}
+
+/*****************************************************************
+ CHINESE VERSION
+*****************************************************************/
+
+:lang(zh-cn) #in-the-press-section,
+:lang(zh-cn) #sponsors-section,
+:lang(zh-cn) .top-section-img-en {
+	display: none;
+}
+
+:lang(zh-cn) #plans-section .faq {
+	display: none;
 }

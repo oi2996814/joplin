@@ -28,3 +28,18 @@
 	margin-top: 0.4em;
 	border-bottom: none;
 }
+
+/* Overrides Bulma's style for <pre>s to prevent Mermaid elements from having a grey background */
+.mermaid {
+	background-color: white;
+}
+
+/* Need to set overflow so that long tables for example are scrollable. We put
+it here and not in noteStyle because the desktop app handles scrolling
+differently at the viewer level.
+
+https://github.com/laurent22/joplin/issues/6370
+*/
+#rendered-md {
+	overflow-x: auto;
+}

@@ -22,10 +22,13 @@ export async function createFolderShare(sessionId: string, folderId: string): Pr
 }
 
 // For backward compatibility with old tests that used a different tree format.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 function convertTree(tree: any): any[] {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	const output: any[] = [];
 
 	for (const jopId in tree) {
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 		const children: any = tree[jopId];
 		const isFolder = children !== null;
 
@@ -44,6 +47,7 @@ function convertTree(tree: any): any[] {
 	return output;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 async function createItemTree3(sessionId: Uuid, userId: Uuid, parentFolderId: string, shareId: Uuid, tree: any[]): Promise<void> {
 	const user = await models().user().load(userId);
 
@@ -66,7 +70,7 @@ async function createItemTree3(sessionId: Uuid, userId: Uuid, parentFolderId: st
 	}
 }
 
-export async function inviteUserToShare(share: Share, sharerSessionId: string, recipientEmail: string, acceptShare: boolean = true) {
+export async function inviteUserToShare(share: Share, sharerSessionId: string, recipientEmail: string, acceptShare = true) {
 	let shareUser = await postApi(sharerSessionId, `shares/${share.id}/users`, {
 		email: recipientEmail,
 	}) as ShareUser;
@@ -81,7 +85,8 @@ export async function inviteUserToShare(share: Share, sharerSessionId: string, r
 	return shareUser;
 }
 
-export async function shareFolderWithUser(sharerSessionId: string, shareeSessionId: string, sharedFolderId: string, itemTree: any, acceptShare: boolean = true): Promise<ShareResult> {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+export async function shareFolderWithUser(sharerSessionId: string, shareeSessionId: string, sharedFolderId: string, itemTree: any, acceptShare = true): Promise<ShareResult> {
 	itemTree = Array.isArray(itemTree) ? itemTree : convertTree(itemTree);
 
 	const sharee = await models().session().sessionUser(shareeSessionId);

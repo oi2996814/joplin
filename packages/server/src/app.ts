@@ -3,9 +3,9 @@ require('source-map-support').install();
 
 import * as Koa from 'koa';
 import * as fs from 'fs-extra';
-import Logger, { LoggerWrapper, TargetType } from '@joplin/lib/Logger';
-import config, { initConfig, runningInDocker } from './config';
-import { migrateLatest, waitForConnection, sqliteDefaultDir, latestMigration } from './db';
+import Logger, { LogLevel, LoggerWrapper, TargetType } from '@joplin/utils/Logger';
+import config, { fullVersionString, initConfig, runningInDocker } from './config';
+import { migrateLatest, waitForConnection, sqliteDefaultDir, latestMigration, needsMigration, migrateList, versionCheck, ConnectionCheckResult } from './db';
 import { AppContext, Env, KoaNext } from './utils/types';
 import FsDriverNode from '@joplin/lib/fs-driver-node';
 import { getDeviceTimeDrift } from '@joplin/lib/ntp';
@@ -22,8 +22,12 @@ import newModelFactory from './models/factory';
 import setupCommands from './utils/setupCommands';
 import { RouteResponseFormat, routeResponseFormat } from './utils/routeUtils';
 import { parseEnv } from './env';
+import { parseEnvFile } from '@joplin/utils/env';
 import storageConnectionCheck from './utils/storageConnectionCheck';
 import { setLocale } from '@joplin/lib/locale';
+import initLib from '@joplin/lib/initLib';
+import checkAdminHandler from './middleware/checkAdminHandler';
+import ActionLogger from '@joplin/lib/utils/ActionLogger';
 
 interface Argv {
 	env?: Env;
@@ -33,15 +37,15 @@ interface Argv {
 
 const nodeSqlite = require('sqlite3');
 const cors = require('@koa/cors');
-const nodeEnvFile = require('node-env-file');
 const { shimInit } = require('@joplin/lib/shim-init-node.js');
 shimInit({ nodeSqlite });
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 const defaultEnvVariables: Record<Env, any> = {
 	dev: {
 		// To test with the Postgres database, uncomment DB_CLIENT below and
 		// comment out SQLITE_DATABASE. Then start the Postgres server using
-		// `docker-compose --file docker-compose.db-dev.yml up`
+		// `docker compose --file docker-compose.db-dev.yml up`
 
 		// DB_CLIENT: 'pg',
 		SQLITE_DATABASE: `${sqliteDefaultDir}/db-dev.sqlite`,
@@ -63,13 +67,15 @@ function appLogger(): LoggerWrapper {
 	return appLogger_;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 function markPasswords(o: Record<string, any>): Record<string, any> {
 	if (!o) return o;
 
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	const output: Record<string, any> = {};
 
 	for (const k of Object.keys(o)) {
-		if (k.toLowerCase().includes('password') || k.toLowerCase().includes('secret')) {
+		if (k.toLowerCase().includes('password') || k.toLowerCase().includes('secret') || k.toLowerCase().includes('connectionstring')) {
 			output[k] = '********';
 		} else {
 			output[k] = o[k];
@@ -79,6 +85,7 @@ function markPasswords(o: Record<string, any>): Record<string, any> {
 	return output;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 async function getEnvFilePath(env: Env, argv: any): Promise<string> {
 	if (argv.envFile) return argv.envFile;
 
@@ -92,16 +99,29 @@ async function getEnvFilePath(env: Env, argv: any): Promise<string> {
 async function main() {
 	const { selectedCommand, argv: yargsArgv } = await setupCommands();
 
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	const argv: Argv = yargsArgv as any;
 	const env: Env = argv.env as Env || Env.Prod;
 
 	const envFilePath = await getEnvFilePath(env, argv);
 
-	if (envFilePath) nodeEnvFile(envFilePath);
+	let envFromFile: Record<string, string> = {};
+
+	try {
+		if (envFilePath) envFromFile = parseEnvFile(envFilePath);
+	} catch (error) {
+		error.message = `Could not parse env file at ${envFilePath}: ${error.message}`;
+		throw error;
+	}
+
+	const fullEnv = {
+		...envFromFile,
+		...process.env,
+	};
 
 	if (!defaultEnvVariables[env]) throw new Error(`Invalid env: ${env}`);
 
-	const envVariables = parseEnv(process.env, defaultEnvVariables[env]);
+	const envVariables = parseEnv(fullEnv, defaultEnvVariables[env]);
 
 	const app = new Koa();
 
@@ -111,10 +131,17 @@ async function main() {
 	// layout these dependencies in code but not clear how to do this.
 	const corsAllowedDomains = [
 		'https://joplinapp.org',
+
+		// Allows sync with the web version of Joplin
+		'https://app.joplincloud.com',
 	];
 
 	if (env === Env.Dev) {
+		// Stripe (dev)
 		corsAllowedDomains.push('http://localhost:8077');
+
+		// Web client (dev)
+		corsAllowedDomains.push('http://localhost:8088');
 	}
 
 	function acceptOrigin(origin: string): boolean {
@@ -160,7 +187,7 @@ async function main() {
 					});
 				} catch (anotherError) {
 					ctx.response.set('Content-Type', 'application/json');
-					ctx.body = JSON.stringify({ error: error.message });
+					ctx.body = JSON.stringify({ error: `${error.message} (Check the server log for more information)` });
 				}
 			} else {
 				ctx.response.set('Content-Type', 'application/json');
@@ -196,6 +223,7 @@ async function main() {
 
 	app.use(apiVersionHandler);
 	app.use(ownerHandler);
+	app.use(checkAdminHandler);
 	app.use(notificationHandler);
 	app.use(clickJackingHandler);
 	app.use(routeHandler);
@@ -207,12 +235,20 @@ async function main() {
 
 	Logger.fsDriver_ = new FsDriverNode();
 	const globalLogger = new Logger();
-	// globalLogger.addTarget(TargetType.File, { path: `${config().logDir}/app.txt` });
+	const instancePrefix = config().INSTANCE_NAME ? `${config().INSTANCE_NAME}: ` : '';
 	globalLogger.addTarget(TargetType.Console, {
-		format: '%(date_time)s: [%(level)s] %(prefix)s: %(message)s',
-		formatInfo: '%(date_time)s: %(prefix)s: %(message)s',
+		format: (level: LogLevel, _prefix: string) => {
+			if (level === LogLevel.Info) return `%(date_time)s: ${instancePrefix}%(prefix)s: %(message)s`;
+			return `%(date_time)s: ${instancePrefix}[%(level)s] %(prefix)s: %(message)s`;
+		},
 	});
 	Logger.initializeGlobalLogger(globalLogger);
+	initLib(globalLogger);
+
+	// Don't log deletions made by the @joplin/lib API -- ActionLogger is
+	// designed for Joplin client use.
+	ActionLogger.enabled = false;
+
 
 	if (envFilePath) appLogger().info(`Env variables were loaded from: ${envFilePath}`);
 
@@ -229,6 +265,7 @@ async function main() {
 	if (selectedCommand) {
 		const commandArgv = {
 			...argv,
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 			_: (argv as any)._.slice(),
 		};
 		commandArgv._.splice(0, 1);
@@ -240,7 +277,7 @@ async function main() {
 			});
 		} else {
 			const connectionCheck = await waitForConnection(config().database);
-			const models = newModelFactory(connectionCheck.connection, config());
+			const models = newModelFactory(connectionCheck.connection, connectionCheck.connection, config());
 
 			await selectedCommand.run(commandArgv, {
 				db: connectionCheck.connection,
@@ -250,10 +287,11 @@ async function main() {
 	} else {
 		runCommandAndExitApp = false;
 
-		appLogger().info(`Starting server v${config().appVersion} (${env}) on port ${config().port} and PID ${process.pid}...`);
+		appLogger().info(`Starting server ${fullVersionString(config())} (${env}) on port ${config().port} and PID ${process.pid}...`);
 
 		if (config().maxTimeDrift) {
-			const timeDrift = await getDeviceTimeDrift();
+			appLogger().info(`Checking for time drift using NTP server: ${config().NTP_SERVER}`);
+			const timeDrift = await getDeviceTimeDrift(config().NTP_SERVER);
 			if (Math.abs(timeDrift) > config().maxTimeDrift) {
 				throw new Error(`The device time drift is ${timeDrift}ms (Max allowed: ${config().maxTimeDrift}ms) - cannot continue as it could cause data loss and conflicts on the sync clients. You may increase env var MAX_TIME_DRIFT to pass the check, or set to 0 to disabled the check.`);
 			}
@@ -261,6 +299,12 @@ async function main() {
 		} else {
 			appLogger().info('Skipping NTP time check because MAX_TIME_DRIFT is 0.');
 		}
+
+		const printConnectionCheckInfo = (connectionCheck: ConnectionCheckResult) => {
+			const connectionCheckLogInfo = { ...connectionCheck };
+			delete connectionCheckLogInfo.connection;
+			appLogger().info('Connection check:', connectionCheckLogInfo);
+		};
 
 		setLocale('en_GB');
 
@@ -276,35 +320,53 @@ async function main() {
 
 		appLogger().info('Trying to connect to database...');
 		const connectionCheck = await waitForConnection(config().database);
+		printConnectionCheckInfo(connectionCheck);
 
-		const connectionCheckLogInfo = { ...connectionCheck };
-		delete connectionCheckLogInfo.connection;
-
-		appLogger().info('Connection check:', connectionCheckLogInfo);
 		const ctx = app.context as AppContext;
 
-		await setupAppContext(ctx, env, connectionCheck.connection, appLogger);
-
-		await initializeJoplinUtils(config(), ctx.joplinBase.models, ctx.joplinBase.services.mustache);
+		await versionCheck(connectionCheck.connection);
 
 		if (config().database.autoMigration) {
 			appLogger().info('Auto-migrating database...');
-			await migrateLatest(ctx.joplinBase.db);
-			appLogger().info('Latest migration:', await latestMigration(ctx.joplinBase.db));
+			await migrateLatest(connectionCheck.connection);
+			appLogger().info('Latest migration:', await latestMigration(connectionCheck.connection));
 		} else {
+			if (!config().DB_ALLOW_INCOMPLETE_MIGRATIONS && (await needsMigration(connectionCheck.connection))) {
+				const list = await migrateList(connectionCheck.connection, true);
+				throw new Error(`One or more migrations need to be applied:\n\n${list}`);
+			}
 			appLogger().info('Skipped database auto-migration.');
 		}
 
+		if (config().DB_USE_SLAVE) appLogger().info('Using database replication - trying to connect to slave...');
+		const slaveConnectionCheck = config().DB_USE_SLAVE ? await waitForConnection(config().databaseSlave) : null;
+
+		if (slaveConnectionCheck) {
+			printConnectionCheckInfo(slaveConnectionCheck);
+		} else {
+			appLogger().info('Not using database replication...');
+		}
+
+		await setupAppContext(
+			ctx,
+			env,
+			connectionCheck.connection,
+			slaveConnectionCheck ? slaveConnectionCheck.connection : connectionCheck.connection,
+			appLogger,
+		);
+
+		await initializeJoplinUtils(config(), ctx.joplinBase.models, ctx.joplinBase.services.mustache);
+
 		appLogger().info('Performing main storage check...');
-		appLogger().info(await storageConnectionCheck(config().storageDriver, ctx.joplinBase.db, ctx.joplinBase.models));
+		appLogger().info(await storageConnectionCheck(config().storageDriver, ctx.joplinBase.db, ctx.joplinBase.dbSlave, ctx.joplinBase.models));
 
 		if (config().storageDriverFallback) {
 			appLogger().info('Performing fallback storage check...');
-			appLogger().info(await storageConnectionCheck(config().storageDriverFallback, ctx.joplinBase.db, ctx.joplinBase.models));
+			appLogger().info(await storageConnectionCheck(config().storageDriverFallback, ctx.joplinBase.db, ctx.joplinBase.dbSlave, ctx.joplinBase.models));
 		}
 
 		appLogger().info('Starting services...');
-		await startServices(ctx.joplinBase.services);
+		await startServices(config(), ctx.joplinBase.services);
 
 		appLogger().info(`Call this for testing: \`curl ${config().apiBaseUrl}/api/ping\``);
 
@@ -314,6 +376,7 @@ async function main() {
 	if (runCommandAndExitApp) process.exit(0);
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 main().catch((error: any) => {
 	console.error(error);
 	process.exit(1);

@@ -7,12 +7,11 @@ function setupStore() {
 	return store;
 }
 
-describe('services_KvStore', function() {
+describe('services_KvStore', () => {
 
-	beforeEach(async (done) => {
+	beforeEach(async () => {
 		await setupDatabaseAndSynchronizer(1);
 		await switchClient(1);
-		done();
 	});
 
 	it('should set and get values', (async () => {

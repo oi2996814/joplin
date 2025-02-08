@@ -9,20 +9,13 @@ interface Props {
 	buttons: ButtonSpec[];
 }
 
-const StyledRoot = styled.div`
-	display: flex;
-	width: 100%;
-	box-sizing: border-box;
-	justify-content: flex-end;
-	padding-top: ${(props: any) => props.theme.mainPadding}px;
-`;
 
 const StyledButton = styled(Button)`${space}`;
 
 function buttonTitle(b: ButtonSpec) {
 	if (b.title) return b.title;
 
-	const defaultTitles: any = {
+	const defaultTitles: Record<string, string> = {
 		'ok': _('OK'),
 		'cancel': _('Cancel'),
 		'yes': _('Yes'),
@@ -45,8 +38,8 @@ export default function UserWebviewDialogButtonBar(props: Props) {
 	}
 
 	return (
-		<StyledRoot>
+		<div className='user-dialog-button-bar'>
 			{renderButtons()}
-		</StyledRoot>
+		</div>
 	);
 }

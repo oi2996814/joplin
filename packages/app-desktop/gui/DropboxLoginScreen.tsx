@@ -11,31 +11,33 @@ interface Props {
 	themeId: string;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 class DropboxLoginScreenComponent extends React.Component<any, any> {
 
-	shared_: any;
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+	private shared_: any;
 
-	constructor(props: Props) {
+	public constructor(props: Props) {
 		super(props);
 
 		this.shared_ = new Shared(this, (msg: string) => bridge().showInfoMessageBox(msg), (msg: string) => bridge().showErrorMessageBox(msg));
 	}
 
-	UNSAFE_componentWillMount() {
+	public UNSAFE_componentWillMount() {
 		this.shared_.refreshUrl();
 	}
 
-	render() {
+	public render() {
 		const style = this.props.style;
 		const theme = themeStyle(this.props.themeId);
 
-		const containerStyle = Object.assign({}, theme.containerStyle, {
-			padding: theme.configScreenPadding,
+		const containerStyle = { ...theme.containerStyle, padding: theme.configScreenPadding,
 			height: style.height - theme.margin * 2,
-			flex: 1,
-		});
+			flex: 1 };
 
-		const inputStyle = Object.assign({}, theme.inputStyle, { width: 500 });
+		const inputStyle = { ...theme.inputStyle, width: 500 };
+
+		const buttonStyle = { ...theme.buttonStyle, marginRight: 10 };
 
 		return (
 			<div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
@@ -49,7 +51,7 @@ class DropboxLoginScreenComponent extends React.Component<any, any> {
 					<p>
 						<input type="text" value={this.state.authCode} onChange={this.shared_.authCodeInput_change} style={inputStyle} />
 					</p>
-					<button disabled={this.state.checkingAuthToken} onClick={this.shared_.submit_click}>
+					<button disabled={this.state.checkingAuthToken} style={buttonStyle} onClick={this.shared_.submit_click}>
 						{_('Submit')}
 					</button>
 				</div>
@@ -61,6 +63,7 @@ class DropboxLoginScreenComponent extends React.Component<any, any> {
 	}
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 const mapStateToProps = (state: any) => {
 	return {
 		themeId: state.settings.theme,

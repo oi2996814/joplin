@@ -16,7 +16,7 @@ export default class EventModel extends BaseModel<Event> {
 		return UuidType.Native;
 	}
 
-	public async create(type: EventType, name: string = '') {
+	public async create(type: EventType, name = '') {
 		await this.save({
 			name,
 			type,
@@ -31,6 +31,13 @@ export default class EventModel extends BaseModel<Event> {
 			.where('name', '=', name)
 			.orderBy('counter', 'desc')
 			.first();
+	}
+
+	public async deleteOldEvents(ttl: number): Promise<void> {
+		const cutOffDate = Date.now() - ttl;
+		await this.db(this.tableName)
+			.where('created_time', '<', cutOffDate)
+			.delete();
 	}
 
 }

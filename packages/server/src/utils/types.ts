@@ -1,4 +1,4 @@
-import { LoggerWrapper } from '@joplin/lib/Logger';
+import { LoggerWrapper } from '@joplin/utils/Logger';
 import { StripePublicConfig } from '@joplin/lib/utils/joplinCloud';
 import * as Koa from 'koa';
 import { User, Uuid } from '../services/database/types';
@@ -7,6 +7,7 @@ import { Account } from '../models/UserModel';
 import { Services } from '../services/types';
 import { Routers } from './routeUtils';
 import { DbConnection } from '../db';
+import { EnvVariables, MailerSecurity } from '../env';
 
 export enum Env {
 	Dev = 'dev',
@@ -24,6 +25,7 @@ export interface NotificationView {
 interface AppContextJoplin {
 	env: Env;
 	db: DbConnection;
+	dbSlave: DbConnection;
 	models: Models;
 	appLogger(): LoggerWrapper;
 	notifications: NotificationView[];
@@ -64,6 +66,7 @@ export interface DatabaseConfig {
 	port?: number;
 	user?: string;
 	password?: string;
+	connectionString?: string;
 	asyncStackTraces?: boolean;
 	slowQueryLogEnabled?: boolean;
 	slowQueryLogMinDuration?: number;
@@ -74,7 +77,7 @@ export interface MailerConfig {
 	enabled: boolean;
 	host: string;
 	port: number;
-	secure: boolean;
+	security: MailerSecurity;
 	authUser: string;
 	authPassword: string;
 	noReplyName: string;
@@ -109,7 +112,7 @@ export enum StorageDriverType {
 //   old storage will be cleared and all content will be on the new storage.
 //
 // - In ReadAndWrite mode, it's going to write the content to the fallback
-//   driver too. This is purely for safey - it allows deploying the new storage
+//   driver too. This is purely for safety - it allows deploying the new storage
 //   (such as the filesystem or S3) but still keep the old content up-to-date.
 //   So if something goes wrong it's possible to go back to the old storage
 //   until the new one is working.
@@ -129,8 +132,21 @@ export interface StorageDriverConfig {
 	bucket?: string;
 }
 
-export interface Config {
+export interface LdapConfig {
+	enabled: boolean;
+	userCreation: boolean;
+	host: string;
+	mailAttribute: string;
+	fullNameAttribute: string;
+	baseDN: string;
+	bindDN: string;
+	bindPW: string;
+	tlsCaFile: string;
+}
+
+export interface Config extends EnvVariables {
 	appVersion: string;
+	joplinServerVersion: string; // May be different from appVersion, if this is a fork of JS
 	appName: string;
 	env: Env;
 	port: number;
@@ -143,6 +159,7 @@ export interface Config {
 	tempDir: string;
 	baseUrl: string;
 	apiBaseUrl: string;
+	adminBaseUrl: string;
 	userContentBaseUrl: string;
 	joplinAppBaseUrl: string;
 	signupEnabled: boolean;
@@ -150,6 +167,7 @@ export interface Config {
 	accountTypesEnabled: boolean;
 	showErrorStackTraces: boolean;
 	database: DatabaseConfig;
+	databaseSlave: DatabaseConfig;
 	mailer: MailerConfig;
 	stripe: StripeConfig;
 	supportEmail: string;
@@ -161,6 +179,7 @@ export interface Config {
 	storageDriverFallback: StorageDriverConfig;
 	itemSizeHardLimit: number;
 	maxTimeDrift: number;
+	ldap: LdapConfig[];
 }
 
 export enum HttpMethod {

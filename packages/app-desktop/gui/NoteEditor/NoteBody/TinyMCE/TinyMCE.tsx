@@ -1,11 +1,12 @@
 import * as React from 'react';
-import { useState, useEffect, useCallback, useRef, forwardRef, useImperativeHandle } from 'react';
-import { ScrollOptions, ScrollOptionTypes, EditorCommand, NoteBodyEditorProps, ResourceInfos } from '../../utils/types';
-import { resourcesStatus, commandAttachFileToBody, handlePasteEvent, processPastedHtml, attachedResources } from '../../utils/resourceHandling';
+import { useState, useEffect, useCallback, useRef, forwardRef, useImperativeHandle, useMemo } from 'react';
+import { ScrollOptions, ScrollOptionTypes, EditorCommand, NoteBodyEditorProps, ResourceInfos, HtmlToMarkdownHandler, ScrollToTextValue } from '../../utils/types';
+import { resourcesStatus, commandAttachFileToBody, getResourcesFromPasteEvent, processPastedHtml } from '../../utils/resourceHandling';
+import attachedResources from '@joplin/lib/utils/attachedResources';
 import useScroll from './utils/useScroll';
 import styles_ from './styles';
 import CommandService from '@joplin/lib/services/CommandService';
-import { ToolbarButtonInfo } from '@joplin/lib/services/commands/ToolbarButtonUtils';
+import { ToolbarItem } from '@joplin/lib/services/commands/ToolbarButtonUtils';
 import ToggleEditorsButton, { Value as ToggleEditorsButtonValue } from '../../../ToggleEditorsButton/ToggleEditorsButton';
 import ToolbarButton from '../../../../gui/ToolbarButton/ToolbarButton';
 import usePluginServiceRegistration from '../../utils/usePluginServiceRegistration';
@@ -14,33 +15,36 @@ import { _, closestSupportedLocale } from '@joplin/lib/locale';
 import useContextMenu from './utils/useContextMenu';
 import { copyHtmlToClipboard } from '../../utils/clipboardUtils';
 import shim from '@joplin/lib/shim';
-import { MarkupToHtml } from '@joplin/renderer';
-import { reg } from '@joplin/lib/registry';
+import { MarkupLanguage, MarkupToHtml } from '@joplin/renderer';
 import BaseItem from '@joplin/lib/models/BaseItem';
 import setupToolbarButtons from './utils/setupToolbarButtons';
 import { plainTextToHtml } from '@joplin/lib/htmlUtils';
-import openEditDialog from './utils/openEditDialog';
-import { MarkupToHtmlOptions } from '../../utils/useMarkupToHtml';
 import { themeStyle } from '@joplin/lib/theme';
 import { loadScript } from '../../../utils/loadScript';
 import bridge from '../../../../services/bridge';
+import { TinyMceEditorEvents } from './utils/types';
+import type { Editor, EditorEvent } from 'tinymce';
+import { joplinCommandToTinyMceCommands, TinyMceCommand } from './utils/joplinCommandToTinyMceCommands';
+import shouldPasteResources from './utils/shouldPasteResources';
+import lightTheme from '@joplin/lib/themes/light';
+import { Options as NoteStyleOptions } from '@joplin/renderer/noteStyle';
+import markupRenderOptions from '../../utils/markupRenderOptions';
+import { DropHandler } from '../../utils/useDropHandler';
+import Logger from '@joplin/utils/Logger';
+import useWebViewApi from './utils/useWebViewApi';
+import useLinkTooltips from './utils/useLinkTooltips';
+import { focus } from '@joplin/lib/utils/focusHandler';
+const md5 = require('md5');
 const { clipboard } = require('electron');
 const supportedLocales = require('./supportedLocales');
+import { hasProtocol } from '@joplin/utils/url';
+import useTabIndenter from './utils/useTabIndenter';
+import useKeyboardRefocusHandler from './utils/useKeyboardRefocusHandler';
+import useDocument from '../../../hooks/useDocument';
+import useEditDialog from './utils/useEditDialog';
+import useEditDialogEventListeners from './utils/useEditDialogEventListeners';
 
-function markupRenderOptions(override: MarkupToHtmlOptions = null): MarkupToHtmlOptions {
-	return {
-		plugins: {
-			checkbox: {
-				checkboxRenderingType: 2,
-			},
-			link_open: {
-				linkRenderingType: 2,
-			},
-		},
-		replaceResourceInternalToExternalLinks: true,
-		...override,
-	};
-}
+const logger = Logger.create('TinyMCE');
 
 // In TinyMCE 5.2, when setting the body to '<div id="rendered-md"></div>',
 // it would end up as '<div id="rendered-md"><br/></div>' once rendered
@@ -56,42 +60,26 @@ function markupRenderOptions(override: MarkupToHtmlOptions = null): MarkupToHtml
 // so as a workaround we manually add this <br> for empty documents,
 // which fixes the issue.
 //
+// However,
+//    <div id="rendered-md"><br/></div>
+// breaks newline behaviour in new notes (see https://github.com/laurent22/joplin/issues/9786).
+// Thus, we instead use
+//    <div id="rendered-md"><p></p></div>
+// which also seems to work around the list issue.
+//
 // Perhaps upgrading the list plugin (which is a fork of TinyMCE own list plugin)
 // would help?
-function awfulBrHack(html: string): string {
-	return html === '<div id="rendered-md"></div>' ? '<div id="rendered-md"><br/></div>' : html;
+function awfulInitHack(html: string): string {
+	return html === '<div id="rendered-md"></div>' ? '<div id="rendered-md"><p></p></div>' : html;
 }
 
-function findEditableContainer(node: any): any {
-	while (node) {
-		if (node.classList && node.classList.contains('joplin-editable')) return node;
-		node = node.parentNode;
-	}
-	return null;
-}
 
 let markupToHtml_ = new MarkupToHtml();
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 function stripMarkup(markupLanguage: number, markup: string, options: any = null) {
 	if (!markupToHtml_) markupToHtml_ = new MarkupToHtml();
 	return	markupToHtml_.stripMarkup(markupLanguage, markup, options);
 }
-
-interface TinyMceCommand {
-	name: string;
-	value?: any;
-	ui?: boolean;
-}
-
-interface JoplinCommandToTinyMceCommands {
-	[key: string]: TinyMceCommand;
-}
-
-const joplinCommandToTinyMceCommands: JoplinCommandToTinyMceCommands = {
-	'textBold': { name: 'mceToggleFormat', value: 'bold' },
-	'textItalic': { name: 'mceToggleFormat', value: 'italic' },
-	'textLink': { name: 'mceLink' },
-	'search': { name: 'SearchReplace' },
-};
 
 interface LastOnChangeEventInfo {
 	content: string;
@@ -99,13 +87,15 @@ interface LastOnChangeEventInfo {
 	contentKey: string;
 }
 
-let loadedCssFiles_: string[] = [];
-let loadedJsFiles_: string[] = [];
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 let dispatchDidUpdateIID_: any = null;
-let changeId_: number = 1;
+let changeId_ = 1;
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 const TinyMCE = (props: NoteBodyEditorProps, ref: any) => {
-	const [editor, setEditor] = useState(null);
+	const [editorContainer, setEditorContainer] = useState<HTMLDivElement|null>(null);
+	const editorContainerDom = useDocument(editorContainer);
+	const [editor, setEditor] = useState<Editor|null>(null);
 	const [scriptLoaded, setScriptLoaded] = useState(false);
 	const [editorReady, setEditorReady] = useState(false);
 	const [draggingStarted, setDraggingStarted] = useState(false);
@@ -113,7 +103,7 @@ const TinyMCE = (props: NoteBodyEditorProps, ref: any) => {
 	const props_onMessage = useRef(null);
 	props_onMessage.current = props.onMessage;
 
-	const props_onDrop = useRef(null);
+	const props_onDrop = useRef<DropHandler|null>(null);
 	props_onDrop.current = props.onDrop;
 
 	const markupToHtml = useRef(null);
@@ -125,8 +115,7 @@ const TinyMCE = (props: NoteBodyEditorProps, ref: any) => {
 		contentKey: null,
 	});
 
-	const rootIdRef = useRef<string>(`tinymce-${Date.now()}${Math.round(Math.random() * 10000)}`);
-	const editorRef = useRef<any>(null);
+	const editorRef = useRef<Editor>(null);
 	editorRef.current = editor;
 
 	const styles = styles_(props);
@@ -134,17 +123,25 @@ const TinyMCE = (props: NoteBodyEditorProps, ref: any) => {
 
 	const { scrollToPercent } = useScroll({ editor, onScroll: props.onScroll });
 
-	usePluginServiceRegistration(ref);
-	useContextMenu(editor, props.plugins, props.dispatch);
-
-	const dispatchDidUpdate = (editor: any) => {
+	const dispatchDidUpdate = useCallback((editor: Editor) => {
 		if (dispatchDidUpdateIID_) shim.clearTimeout(dispatchDidUpdateIID_);
 		dispatchDidUpdateIID_ = shim.setTimeout(() => {
 			dispatchDidUpdateIID_ = null;
 			if (editor && editor.getDoc()) editor.getDoc().dispatchEvent(new Event('joplin-noteDidUpdate'));
 		}, 10);
-	};
+	}, []);
 
+	const editDialog = useEditDialog({ editor, markupToHtml, dispatchDidUpdate });
+	const editDialogRef = useRef(editDialog);
+	editDialogRef.current = editDialog;
+
+	useEditDialogEventListeners(editor, editDialog);
+	usePluginServiceRegistration(ref);
+	useContextMenu(editor, props.plugins, props.dispatch, props.htmlToMarkdown, props.markupToHtml, editDialog);
+	useTabIndenter(editor, !props.tabMovesFocus);
+	useKeyboardRefocusHandler(editor);
+
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	const insertResourcesIntoContent = useCallback(async (filePaths: string[] = null, options: any = null) => {
 		const resourceMd = await commandAttachFileToBody('', filePaths, options);
 		if (!resourceMd) return;
@@ -155,11 +152,12 @@ const TinyMCE = (props: NoteBodyEditorProps, ref: any) => {
 	const insertResourcesIntoContentRef = useRef(null);
 	insertResourcesIntoContentRef.current = insertResourcesIntoContent;
 
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	const onEditorContentClick = useCallback((event: any) => {
 		const nodeName = event.target ? event.target.nodeName : '';
 
 		if (nodeName === 'INPUT' && event.target.getAttribute('type') === 'checkbox') {
-			editor.fire('joplinChange');
+			editor.fire(TinyMceEditorEvents.JoplinChange);
 			dispatchDidUpdate(editor);
 		}
 
@@ -172,13 +170,13 @@ const TinyMCE = (props: NoteBodyEditorProps, ref: any) => {
 				if (anchor) {
 					anchor.scrollIntoView();
 				} else {
-					reg.logger().warn('TinyMce: could not find anchor with ID ', anchorName);
+					logger.warn('could not find anchor with ID ', anchorName);
 				}
 			} else {
 				props.onMessage({ channel: href });
 			}
 		}
-	}, [editor, props.onMessage]);
+	}, [editor, props.onMessage, dispatchDidUpdate]);
 
 	useImperativeHandle(ref, () => {
 		return {
@@ -187,7 +185,7 @@ const TinyMCE = (props: NoteBodyEditorProps, ref: any) => {
 				return prop_htmlToMarkdownRef.current(props.contentMarkupLanguage, editorRef.current.getContent(), props.contentOriginalCss);
 			},
 			resetScroll: () => {
-				if (editor) editor.getWin().scrollTo(0,0);
+				if (editor) editor.getWin().scrollTo(0, 0);
 			},
 			scrollTo: (options: ScrollOptions) => {
 				if (!editor) return;
@@ -212,15 +210,22 @@ const TinyMCE = (props: NoteBodyEditorProps, ref: any) => {
 			execCommand: async (cmd: EditorCommand) => {
 				if (!editor) return false;
 
-				reg.logger().debug('TinyMce: execCommand', cmd);
+				logger.debug('execCommand', cmd);
 
 				let commandProcessed = true;
 
 				if (cmd.name === 'insertText') {
-					const result = await markupToHtml.current(MarkupToHtml.MARKUP_LANGUAGE_MARKDOWN, cmd.value, { bodyOnly: true });
+					const result = await markupToHtml.current(MarkupToHtml.MARKUP_LANGUAGE_MARKDOWN, cmd.value, markupRenderOptions({ bodyOnly: true }));
 					editor.insertContent(result.html);
 				} else if (cmd.name === 'editor.focus') {
-					editor.focus();
+					focus('TinyMCE::editor.focus', editor);
+					if (cmd.value?.moveCursorToStart) {
+						editor.selection.placeCaretAt(0, 0);
+						editor.selection.setCursorLocation(
+							editor.dom.root,
+							0,
+						);
+					}
 				} else if (cmd.name === 'editor.execCommand') {
 					if (!('ui' in cmd.value)) cmd.value.ui = false;
 					if (!('value' in cmd.value)) cmd.value.value = null;
@@ -234,7 +239,29 @@ const TinyMCE = (props: NoteBodyEditorProps, ref: any) => {
 					} else if (cmd.value.type === 'files') {
 						insertResourcesIntoContentRef.current(cmd.value.paths, { createFileURL: !!cmd.value.createFileURL });
 					} else {
-						reg.logger().warn('TinyMCE: unsupported drop item: ', cmd);
+						logger.warn('unsupported drop item: ', cmd);
+					}
+				} else if (cmd.name === 'editor.scrollToText') {
+
+					const cmdValue = cmd.value as ScrollToTextValue;
+
+					const findElementByText = (doc: Document, text: string, element: string) => {
+						const headers = doc.querySelectorAll(element);
+						for (const header of headers) {
+							if (header.textContent?.trim() === text) {
+								return header;
+							}
+						}
+						return null;
+					};
+
+					const contentDocument = editor.getDoc();
+					const targetElement = findElementByText(contentDocument, cmdValue.text, cmdValue.element);
+
+					if (targetElement) {
+						targetElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
+					} else {
+						logger.warn('editor.scrollToText: Could not find text to scroll to :', cmdValue);
 					}
 				} else {
 					commandProcessed = false;
@@ -242,6 +269,7 @@ const TinyMCE = (props: NoteBodyEditorProps, ref: any) => {
 
 				if (commandProcessed) return true;
 
+				// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 				const additionalCommands: any = {
 					selectedText: () => {
 						return stripMarkup(MarkupToHtml.MARKUP_LANGUAGE_HTML, editor.selection.getContent());
@@ -249,9 +277,10 @@ const TinyMCE = (props: NoteBodyEditorProps, ref: any) => {
 					selectedHtml: () => {
 						return editor.selection.getContent();
 					},
+					// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 					replaceSelection: (value: any) => {
 						editor.selection.setContent(value);
-						editor.fire('joplinChange');
+						editor.fire(TinyMceEditorEvents.JoplinChange);
 						dispatchDidUpdate(editor);
 
 						// It doesn't make sense but it seems calling setContent
@@ -260,6 +289,7 @@ const TinyMCE = (props: NoteBodyEditorProps, ref: any) => {
 						// https://github.com/tinymce/tinymce/issues/3745
 						window.requestAnimationFrame(() => editor.undoManager.add());
 					},
+					pasteAsText: () => editor.fire(TinyMceEditorEvents.PasteAsText),
 				};
 
 				if (additionalCommands[cmd.name]) {
@@ -267,19 +297,26 @@ const TinyMCE = (props: NoteBodyEditorProps, ref: any) => {
 				}
 
 				if (!joplinCommandToTinyMceCommands[cmd.name]) {
-					reg.logger().warn('TinyMCE: unsupported Joplin command: ', cmd);
+					logger.warn('unsupported Joplin command: ', cmd);
 					return false;
 				}
 
-				const tinyMceCmd: TinyMceCommand = { ...joplinCommandToTinyMceCommands[cmd.name] };
-				if (!('ui' in tinyMceCmd)) tinyMceCmd.ui = false;
-				if (!('value' in tinyMceCmd)) tinyMceCmd.value = null;
+				if (joplinCommandToTinyMceCommands[cmd.name] === true) {
+					// Already handled in useWindowCommandHandlers.ts
+				} else if (joplinCommandToTinyMceCommands[cmd.name] === false) {
+					// explicitly not supported
+				} else {
+					const tinyMceCmd: TinyMceCommand = { ...(joplinCommandToTinyMceCommands[cmd.name] as TinyMceCommand) };
+					if (!('ui' in tinyMceCmd)) tinyMceCmd.ui = false;
+					if (!('value' in tinyMceCmd)) tinyMceCmd.value = null;
 
-				editor.execCommand(tinyMceCmd.name, tinyMceCmd.ui, tinyMceCmd.value);
+					editor.execCommand(tinyMceCmd.name, tinyMceCmd.ui, tinyMceCmd.value);
+				}
 
 				return true;
 			},
 		};
+		// eslint-disable-next-line @seiyab/react-hooks/exhaustive-deps -- Old code before rule was applied
 	}, [editor, props.contentMarkupLanguage, props.contentOriginalCss]);
 
 	// -----------------------------------------------------------------------------------------
@@ -316,9 +353,12 @@ const TinyMCE = (props: NoteBodyEditorProps, ref: any) => {
 	// };
 
 	useEffect(() => {
+		if (!editorContainerDom) return () => {};
+
 		let cancelled = false;
 
 		async function loadScripts() {
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 			const scriptsToLoad: any[] = [
 				{
 					src: `${bridge().vendorDir()}/lib/tinymce/tinymce.min.js`,
@@ -333,14 +373,15 @@ const TinyMCE = (props: NoteBodyEditorProps, ref: any) => {
 			];
 
 			for (const s of scriptsToLoad) {
-				if (document.getElementById(s.id)) {
+				if (editorContainerDom.getElementById(s.id)) {
 					s.loaded = true;
 					continue;
 				}
 
+				// eslint-disable-next-line no-console
 				console.info('Loading script', s.src);
 
-				await loadScript(s);
+				await loadScript(s, editorContainerDom);
 				if (cancelled) return;
 
 				s.loaded = true;
@@ -354,18 +395,25 @@ const TinyMCE = (props: NoteBodyEditorProps, ref: any) => {
 		return () => {
 			cancelled = true;
 		};
-	}, []);
+	}, [editorContainerDom]);
+
+	useWebViewApi(editor, editorContainerDom?.defaultView);
+	const { resetModifiedTitles: resetLinkTooltips } = useLinkTooltips(editor);
 
 	useEffect(() => {
+		if (!editorContainerDom) return () => {};
 		const theme = themeStyle(props.themeId);
+		const backgroundColor = props.whiteBackgroundNoteRendering ? lightTheme.backgroundColor : theme.backgroundColor;
 
-		const element = document.createElement('style');
+		const element = editorContainerDom.createElement('style');
 		element.setAttribute('id', 'tinyMceStyle');
-		document.head.appendChild(element);
-		element.appendChild(document.createTextNode(`
-			.joplin-tinymce .tox-editor-header {
-				padding-left: ${styles.leftExtraToolbarContainer.width + styles.leftExtraToolbarContainer.padding * 2}px;
-				padding-right: ${styles.rightExtraToolbarContainer.width + styles.rightExtraToolbarContainer.padding * 2}px;
+		editorContainerDom.head.appendChild(element);
+		element.appendChild(editorContainerDom.createTextNode(`
+			.joplin-tinymce .tox-editor-header.tox-editor-header {
+				margin-left: ${styles.leftExtraToolbarContainer.width + styles.leftExtraToolbarContainer.padding * 2}px;
+				margin-right: ${styles.rightExtraToolbarContainer.width + styles.rightExtraToolbarContainer.padding * 2}px;
+				padding: 0;
+				box-shadow: none;
 			}
 			
 			.tox .tox-toolbar,
@@ -379,12 +427,43 @@ const TinyMCE = (props: NoteBodyEditorProps, ref: any) => {
 			.tox .tox-dialog,
 			.tox textarea,
 			.tox input,
+			.tox .tox-menu,
 			.tox .tox-dialog__footer {
 				background-color: ${theme.backgroundColor} !important;
 			}
 
-			.tox .tox-dialog__body-content {
+			.tox .tox-dialog__body-content,
+			.tox .tox-collection__item,
+			.tox .tox-insert-table-picker__label {
 				color: ${theme.color};
+			}
+
+			.tox .tox-dialog__body-nav-item {
+				color: ${theme.color};
+			}
+
+			.tox .tox-dialog__body-nav-item[aria-selected=true] {
+				color: ${theme.color3};
+				border-color: ${theme.color3};
+				background-color: ${theme.backgroundColor3};
+			}
+
+			.tox .tox-checkbox__icons .tox-checkbox-icon__unchecked svg {
+				fill: ${theme.color};
+			}
+
+			.tox .tox-collection--list .tox-collection__item--active {
+				color: ${theme.backgroundColor};
+			}
+
+			.tox .tox-collection__item--state-disabled {
+				opacity: 0.7;
+			}
+
+			.tox .tox-menu {
+				/* Ensures that popover menus (the color swatch menu) has a visible border
+				   even in dark mode. */
+				border: 1px solid rgba(140, 140, 140, 0.3);
 			}
 
 			/*
@@ -394,7 +473,7 @@ const TinyMCE = (props: NoteBodyEditorProps, ref: any) => {
 			*/
 			
 			.tox .tox-dialog textarea {
-				font-family: Menlo, Monaco, Consolas, "Courier New", monospace;
+				font-family: Menlo, Monaco, Consolas, "Courier New", monospace !important;
 			}
 
 			.tox .tox-dialog-wrap__backdrop {
@@ -408,6 +487,8 @@ const TinyMCE = (props: NoteBodyEditorProps, ref: any) => {
 
 			.tox .tox-tbtn,
 			.tox .tox-tbtn svg,
+			.tox .tox-menu button > svg,
+			.tox .tox-split-button,
 			.tox .tox-dialog__header,
 			.tox .tox-button--icon .tox-icon svg,
 			.tox .tox-button.tox-button--icon .tox-icon svg,
@@ -417,6 +498,7 @@ const TinyMCE = (props: NoteBodyEditorProps, ref: any) => {
 			.tox .tox-toolbar-label {
 				color: ${theme.color3} !important;
 				fill: ${theme.color3} !important;
+				background: transparent;
 			}
 
 			.tox .tox-statusbar a,
@@ -429,7 +511,9 @@ const TinyMCE = (props: NoteBodyEditorProps, ref: any) => {
 			}
 
 			.tox .tox-tbtn--enabled,
-			.tox .tox-tbtn--enabled:hover {
+			.tox .tox-tbtn--enabled:hover,
+			.tox .tox-menu button:hover,
+			.tox .tox-split-button {
 				background-color: ${theme.selectedColor};
 			}
 
@@ -437,11 +521,18 @@ const TinyMCE = (props: NoteBodyEditorProps, ref: any) => {
 				background-color: ${theme.backgroundColor} !important;
 			}
 			
-			.tox .tox-tbtn:focus {
+			.tox .tox-tbtn:focus,
+			.tox .tox-split-button:focus {
 				background-color: ${theme.backgroundColor3}
 			}
+
+			.tox .tox-tbtn:focus-visible,
+			.tox .tox-split-button:focus-visible {
+				background-color: ${theme.backgroundColorHover3}
+			}
 			
-			.tox .tox-tbtn:hover {
+			.tox .tox-tbtn:hover,
+			.tox .tox-menu button:hover > svg {
 				color: ${theme.colorHover3} !important;
 				fill: ${theme.colorHover3} !important;
 				background-color: ${theme.backgroundColorHover3}
@@ -449,9 +540,7 @@ const TinyMCE = (props: NoteBodyEditorProps, ref: any) => {
 			
 
 			.tox .tox-tbtn {
-				width: ${theme.toolbarHeight}px;
 				height: ${theme.toolbarHeight}px;
-				min-width: ${theme.toolbarHeight}px;
 				min-height: ${theme.toolbarHeight}px;
 				margin: 0;
 			}
@@ -474,6 +563,16 @@ const TinyMCE = (props: NoteBodyEditorProps, ref: any) => {
 				background-color: ${theme.backgroundColor3} !important;
 			}
 
+			.tox .tox-split-button:hover {
+				box-shadow: none;
+			}
+			
+			/* Decrease the spacing between groups */
+			.tox .tox-toolbar__group {
+				padding-left: 7px;
+				padding-right: 7px;
+			}
+
 			.tox-tinymce,
 			.tox .tox-toolbar__group,
 			.tox.tox-tinymce-aux .tox-toolbar__overflow,
@@ -485,6 +584,23 @@ const TinyMCE = (props: NoteBodyEditorProps, ref: any) => {
 				border-top: none !important;
 			}
 
+			/* Override the TinyMCE font styles with more specific CSS selectors.
+			   Without this, the built-in FontAwesome styles are not applied because
+			   they are overridden by TinyMCE. */
+			.plugin-icon.fa, .plugin-icon.far, .plugin-icon.fas {
+				font-family: "Font Awesome 5 Free";
+				font-size: ${theme.toolbarHeight - theme.toolbarPadding}px;
+			}
+			
+			.plugin-icon.fa, .plugin-icon.fas {
+				font-weight: 900;
+			}
+
+			.plugin-icon.fab, .plugin-icon.far {
+				font-weight: 400;
+			}
+
+
 			.joplin-tinymce .tox-toolbar__group {
 				background-color: ${theme.backgroundColor3};
 				padding-top: ${theme.toolbarPadding}px;
@@ -492,7 +608,7 @@ const TinyMCE = (props: NoteBodyEditorProps, ref: any) => {
 			}
 
 			.joplin-tinymce .tox .tox-edit-area__iframe {
-				background-color: ${theme.backgroundColor} !important;
+				background-color: ${backgroundColor} !important;
 			}
 
 			.joplin-tinymce .tox .tox-toolbar__primary {
@@ -504,15 +620,19 @@ const TinyMCE = (props: NoteBodyEditorProps, ref: any) => {
 		`));
 
 		return () => {
-			document.head.removeChild(element);
+			editorContainerDom.head.removeChild(element);
 		};
 		// editorReady is here because TinyMCE starts by initializing a blank iframe, which needs to be
 		// styled by us, otherwise users in dark mode get a bright white flash. During initialization
 		// our styling is overwritten which causes some elements to have the wrong styling. Removing the
 		// style and re-applying it on editorReady gives our styles precedence and prevents any flashing
 		//
+		// watchedNoteFiles is here , as it triggers a re-render of styles whenever it changes,
+		// this keeps the toolbar header styles in sync with toggle external editing button
+		//
 		// tl;dr: editorReady is used here because the css needs to be re-applied after TinyMCE init
-	}, [editorReady, props.themeId]);
+		// eslint-disable-next-line @seiyab/react-hooks/exhaustive-deps -- Old code before rule was applied
+	}, [editorReady, editorContainerDom, props.themeId, lightTheme, props.whiteBackgroundNoteRendering, props.watchedNoteFiles]);
 
 	// -----------------------------------------------------------------------------------------
 	// Enable or disable the editor
@@ -520,7 +640,7 @@ const TinyMCE = (props: NoteBodyEditorProps, ref: any) => {
 
 	useEffect(() => {
 		if (!editor) return;
-		editor.setMode(props.disabled ? 'readonly' : 'design');
+		editor.mode.set(props.disabled ? 'readonly' : 'design');
 	}, [editor, props.disabled]);
 
 	// -----------------------------------------------------------------------------------------
@@ -529,9 +649,7 @@ const TinyMCE = (props: NoteBodyEditorProps, ref: any) => {
 
 	useEffect(() => {
 		if (!scriptLoaded) return;
-
-		loadedCssFiles_ = [];
-		loadedJsFiles_ = [];
+		if (!editorContainer) return;
 
 		const loadEditor = async () => {
 			const language = closestSupportedLocale(props.locale, true, supportedLocales);
@@ -548,48 +666,80 @@ const TinyMCE = (props: NoteBodyEditorProps, ref: any) => {
 
 			const toolbarPluginButtons = pluginCommandNames.length ? ` | ${pluginCommandNames.join(' ')}` : '';
 
+			// The toolbar is going to wrap based on groups of buttons
+			// (delimited by |). It means that if we leave large groups of
+			// buttons towards the end of the toolbar it's going to needlessly
+			// hide many buttons even when there is space. So this is why below,
+			// we create small groups of just one button towards the end.
+
 			const toolbar = [
 				'bold', 'italic', 'joplinHighlight', 'joplinStrikethrough', 'formattingExtras', '|',
 				'link', 'joplinInlineCode', 'joplinCodeBlock', 'joplinAttach', '|',
 				'bullist', 'numlist', 'joplinChecklist', '|',
-				'h1', 'h2', 'h3', 'hr', 'blockquote', 'table', `joplinInsertDateTime${toolbarPluginButtons}`,
+				'h1', 'h2', 'h3', '|',
+				'hr', '|',
+				'blockquote', '|',
+				'tableWithHeader', '|',
+				`joplinInsertDateTime${toolbarPluginButtons}`,
 			];
 
-			const editors = await (window as any).tinymce.init({
-				selector: `#${rootIdRef.current}`,
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+			const containerWindow = editorContainerDom.defaultView as any;
+			const editors = await containerWindow.tinymce.init({
+				selector: `#${editorContainer.id}`,
+
+				// Ensures that the "Premium plugins" toolbar option is disabled. See
+				// https://www.tiny.cloud/docs/tinymce/latest/editor-premium-upgrade-promotion/
+				promotion: false,
 				width: '100%',
 				body_class: 'jop-tinymce',
 				height: '100%',
 				resize: false,
+				highlight_on_focus: false,
 				icons: 'Joplin',
 				icons_url: 'gui/NoteEditor/NoteBody/TinyMCE/icons.js',
-				plugins: 'noneditable link joplinLists hr searchreplace codesample table',
-				noneditable_noneditable_class: 'joplin-editable', // Can be a regex too
-				valid_elements: '*[*]', // We already filter in sanitize_html
+				plugins: 'link joplinLists searchreplace codesample table',
+				noneditable_class: 'joplin-editable', // Can be a regex too
+				iframe_aria_text: _('Rich Text editor. Press Escape then Tab to escape focus.'),
+
+				// #p: Pad empty paragraphs with &nbsp; to prevent them from being removed.
+				// *[*]: Allow all elements and attributes -- we already filter in sanitize_html
+				// See https://www.tiny.cloud/docs/configure/content-filtering/#controlcharacters
+				valid_elements: '#p,*[*]',
+
 				menubar: false,
 				relative_urls: false,
 				branding: false,
 				statusbar: false,
-				target_list: false,
-				table_resize_bars: false,
+				link_target_list: false,
+				// Handle the first table row as table header.
+				// https://www.tiny.cloud/docs/plugins/table/#table_header_type
+				table_header_type: 'sectionCells',
 				language_url: ['en_US', 'en_GB'].includes(language) ? undefined : `${bridge().vendorDir()}/lib/tinymce/langs/${language}`,
 				toolbar: toolbar.join(' '),
 				localization_function: _,
 				contextmenu: false,
 				browser_spellcheck: true,
+
 				formats: {
 					joplinHighlight: { inline: 'mark', remove: 'all' },
 					joplinStrikethrough: { inline: 's', remove: 'all' },
 					joplinInsert: { inline: 'ins', remove: 'all' },
 					joplinSub: { inline: 'sub', remove: 'all' },
 					joplinSup: { inline: 'sup', remove: 'all' },
+					code: { inline: 'code', remove: 'all', attributes: { spellcheck: 'false' } },
+					forecolor: { inline: 'span', styles: { color: '%value' } },
 				},
-				setup: (editor: any) => {
+				setup: (editor: Editor) => {
+					editor.addCommand('joplinAttach', () => {
+						insertResourcesIntoContentRef.current();
+					});
+
 					editor.ui.registry.addButton('joplinAttach', {
 						tooltip: _('Attach file'),
 						icon: 'paperclip',
 						onAction: async function() {
-							insertResourcesIntoContentRef.current();
+							editor.execCommand('joplinAttach');
 						},
 					});
 
@@ -599,7 +749,7 @@ const TinyMCE = (props: NoteBodyEditorProps, ref: any) => {
 						tooltip: _('Code Block'),
 						icon: 'code-sample',
 						onAction: async function() {
-							openEditDialog(editor, markupToHtml, dispatchDidUpdate, null);
+							editDialogRef.current.editNew();
 						},
 					});
 
@@ -607,20 +757,37 @@ const TinyMCE = (props: NoteBodyEditorProps, ref: any) => {
 						tooltip: _('Inline Code'),
 						icon: 'sourcecode',
 						onAction: function() {
-							editor.execCommand('mceToggleFormat', false, 'code', { class: 'inline-code' });
+							// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+							editor.execCommand('mceToggleFormat', false, 'code', { class: 'inline-code' } as any);
 						},
-						onSetup: function(api: any) {
+						onSetup: function(api) {
 							api.setActive(editor.formatter.match('code'));
-							const unbind = editor.formatter.formatChanged('code', api.setActive).unbind;
+							const handle = editor.formatter.formatChanged('code', active => api.setActive(active));
 
 							return function() {
-								if (unbind) unbind();
+								handle?.unbind();
 							};
 						},
 					});
 
+					editor.ui.registry.addMenuButton('tableWithHeader', {
+						icon: 'table',
+						tooltip: 'Table',
+						fetch: (callback) => {
+							callback([
+								{
+									type: 'fancymenuitem',
+									fancytype: 'inserttable',
+									onAction: (data) => {
+										editor.execCommand('mceInsertTable', false, { rows: data.numRows, columns: data.numColumns, options: { headerRows: 1 } });
+									},
+								},
+							]);
+						},
+					});
+
 					editor.ui.registry.addButton('joplinInsertDateTime', {
-						tooltip: _('Insert Date Time'),
+						tooltip: _('Insert time'),
 						icon: 'insert-time',
 						onAction: function() {
 							void CommandService.instance().execute('insertDateTime');
@@ -628,9 +795,16 @@ const TinyMCE = (props: NoteBodyEditorProps, ref: any) => {
 					});
 
 					for (const pluginCommandName of pluginCommandNames) {
+						const iconClassName = CommandService.instance().iconName(pluginCommandName);
+
+						// Only allow characters that appear in Font Awesome class names: letters, spaces, and dashes.
+						const safeIconClassName = iconClassName.replace(/[^a-z0-9 -]/g, '');
+
+						editor.ui.registry.addIcon(pluginCommandName, `<i class="plugin-icon ${safeIconClassName}"></i>`);
+
 						editor.ui.registry.addButton(pluginCommandName, {
 							tooltip: CommandService.instance().label(pluginCommandName),
-							icon: CommandService.instance().iconName(pluginCommandName, 'tinymce'),
+							icon: pluginCommandName,
 							onAction: function() {
 								void CommandService.instance().execute(pluginCommandName);
 							},
@@ -642,26 +816,26 @@ const TinyMCE = (props: NoteBodyEditorProps, ref: any) => {
 					editor.addShortcut('Meta+Shift+9', '', () => editor.execCommand('InsertJoplinChecklist'));
 
 					// TODO: remove event on unmount?
-					editor.on('DblClick', (event: any) => {
-						const editable = findEditableContainer(event.target);
-						if (editable) openEditDialog(editor, markupToHtml, dispatchDidUpdate, editable);
-					});
-
-					// This is triggered when an external file is dropped on the editor
-					editor.on('drop', (event: any) => {
-						// Prevent the message "Dropped file type is not
-						// supported" to show up. It was added in a recent
-						// TinyMCE version and doesn't apply since we do support
+					editor.on('drop', (event) => {
+						// Prevent the message "Dropped file type is not supported" from showing up.
+						// It was added in TinyMCE 5.4 and doesn't apply since we do support
 						// the file type.
-						// https://stackoverflow.com/questions/64782955/tinymce-inline-drag-and-drop-image-upload-not-working
-						event.preventDefault();
-
-						props_onDrop.current(event);
+						//
+						// See https://stackoverflow.com/questions/64782955/tinymce-inline-drag-and-drop-image-upload-not-working
+						//
+						// The other suggested solution, setting block_unsupported_drop to false,
+						// causes all dropped files to be placed at the top of the document.
+						//
+						// Because .preventDefault cancels TinyMCE's own drop handler, we only
+						// call .preventDefault if Joplin handled the event:
+						if (props_onDrop.current(event)) {
+							event.preventDefault();
+						}
 					});
 
-					editor.on('ObjectResized', function(event: any) {
+					editor.on('ObjectResized', (event) => {
 						if (event.target.nodeName === 'IMG') {
-							editor.fire('joplinChange');
+							editor.fire(TinyMceEditorEvents.JoplinChange);
 							dispatchDidUpdate(editor);
 						}
 					});
@@ -670,7 +844,17 @@ const TinyMCE = (props: NoteBodyEditorProps, ref: any) => {
 						setEditorReady(true);
 					});
 
+					const preprocessContent = () => {
+						// Disable spellcheck for all inline code blocks.
+						const codeElements = editor.dom.doc.querySelectorAll('code.inline-code');
+						for (const code of codeElements) {
+							code.setAttribute('spellcheck', 'false');
+						}
+					};
+
 					editor.on('SetContent', () => {
+						preprocessContent();
+
 						props_onMessage.current({ channel: 'noteRenderComplete' });
 					});
 				},
@@ -680,27 +864,18 @@ const TinyMCE = (props: NoteBodyEditorProps, ref: any) => {
 		};
 
 		void loadEditor();
-	}, [scriptLoaded]);
+		// eslint-disable-next-line @seiyab/react-hooks/exhaustive-deps -- Old code before rule was applied
+	}, [scriptLoaded, editorContainer]);
 
 	// -----------------------------------------------------------------------------------------
 	// Set the initial content and load the plugin CSS and JS files
 	// -----------------------------------------------------------------------------------------
 
-	const loadDocumentAssets = (editor: any, pluginAssets: any[]) => {
-		// Note: The way files are cached is not correct because it assumes there's only one version
-		// of each file. However, when the theme change, a new CSS file, specific to the theme, is
-		// created. That file should not be loaded on top of the previous one, but as a replacement.
-		// Otherwise it would do this:
-		// - Try to load CSS for theme 1 => OK
-		// - Try to load CSS for theme 2 => OK
-		// - Try to load CSS for theme 1 => Skip because the file is in cache. As a result, theme 2
-		//                                  incorrectly stay.
-		// The fix would be to make allAssets() return a name and a version for each asset. Then the loading
-		// code would check this and either append the CSS or replace.
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+	const loadDocumentAssets = (themeId: number, editor: any, pluginAssets: any[]) => {
+		const theme = themeStyle(themeId);
 
-		const theme = themeStyle(props.themeId);
-
-		let docHead_: any = null;
+		let docHead_: HTMLHeadElement = null;
 
 		function docHead() {
 			if (docHead_) return docHead_;
@@ -708,50 +883,74 @@ const TinyMCE = (props: NoteBodyEditorProps, ref: any) => {
 			return docHead_;
 		}
 
-		const cssFiles = [
+		const allCssFiles = [
 			`${bridge().vendorDir()}/lib/@fortawesome/fontawesome-free/css/all.min.css`,
 			`gui/note-viewer/pluginAssets/highlight.js/${theme.codeThemeCss}`,
 		].concat(
 			pluginAssets
+				// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 				.filter((a: any) => a.mime === 'text/css')
-				.map((a: any) => a.path)
-		).filter((path: string) => !loadedCssFiles_.includes(path));
+				// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+				.map((a: any) => a.path),
+		);
 
-		const jsFiles = [].concat(
+		const allJsFiles = [].concat(
 			pluginAssets
+				// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 				.filter((a: any) => a.mime === 'application/javascript')
-				.map((a: any) => a.path)
-		).filter((path: string) => !loadedJsFiles_.includes(path));
+				// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+				.map((a: any) => a.path),
+		);
 
-		for (const cssFile of cssFiles) loadedCssFiles_.push(cssFile);
-		for (const jsFile of jsFiles) loadedJsFiles_.push(jsFile);
+		const filePathToElementId = (path: string) => {
+			return `jop-tiny-mce-${md5(escape(path))}`;
+		};
 
-		// console.info('loadDocumentAssets: files to load', cssFiles, jsFiles);
+		const existingElements = Array.from(docHead().getElementsByClassName('jop-tinymce-css')).concat(Array.from(docHead().getElementsByClassName('jop-tinymce-js')));
 
-		if (cssFiles.length) {
-			for (const cssFile of cssFiles) {
-				const script = editor.dom.create('link', {
-					rel: 'stylesheet',
-					type: 'text/css',
-					href: cssFile,
-					class: 'jop-tinymce-css',
-				});
+		const existingIds: string[] = [];
+		for (const e of existingElements) existingIds.push(e.getAttribute('id'));
 
-				docHead().appendChild(script);
-			}
+		const processedIds: string[] = [];
+
+		for (const cssFile of allCssFiles) {
+			const elementId = filePathToElementId(cssFile);
+			processedIds.push(elementId);
+			if (existingIds.includes(elementId)) continue;
+
+			const style = editor.dom.create('link', {
+				id: elementId,
+				rel: 'stylesheet',
+				type: 'text/css',
+				href: cssFile,
+				class: 'jop-tinymce-css',
+			});
+
+			docHead().appendChild(style);
 		}
 
-		if (jsFiles.length) {
-			const editorElementId = editor.dom.uniqueId();
+		for (const jsFile of allJsFiles) {
+			const elementId = filePathToElementId(jsFile);
+			processedIds.push(elementId);
+			if (existingIds.includes(elementId)) continue;
 
-			for (const jsFile of jsFiles) {
-				const script = editor.dom.create('script', {
-					id: editorElementId,
-					type: 'text/javascript',
-					src: jsFile,
-				});
+			const script = editor.dom.create('script', {
+				id: filePathToElementId(jsFile),
+				type: 'text/javascript',
+				class: 'jop-tinymce-js',
+				src: jsFile,
+			});
 
-				docHead().appendChild(script);
+			docHead().appendChild(script);
+		}
+
+		// Remove all previously loaded files that aren't in the assets this time.
+		// Note: This is important to ensure that we properly change themes.
+		// See https://github.com/laurent22/joplin/issues/8520
+		for (const existingId of existingIds) {
+			if (!processedIds.includes(existingId)) {
+				const element = existingElements.find(e => e.getAttribute('id') === existingId);
+				if (element) docHead().removeChild(element);
 			}
 		}
 	};
@@ -789,10 +988,28 @@ const TinyMCE = (props: NoteBodyEditorProps, ref: any) => {
 			const resourcesEqual = resourceInfosEqual(lastOnChangeEventInfo.current.resourceInfos, props.resourceInfos);
 
 			if (lastOnChangeEventInfo.current.content !== props.content || !resourcesEqual) {
-				const result = await props.markupToHtml(props.contentMarkupLanguage, props.content, markupRenderOptions({ resourceInfos: props.resourceInfos }));
+				const result = await props.markupToHtml(
+					props.contentMarkupLanguage,
+					props.content,
+					markupRenderOptions({
+						resourceInfos: props.resourceInfos,
+
+						// Allow file:// URLs that point to the resource directory.
+						// This prevents HTML-style resource URLs (e.g. <a href="file://path/to/resource/.../"></a>)
+						// from being discarded.
+						allowedFilePrefixes: [props.resourceDirectory],
+					}),
+				);
 				if (cancelled) return;
 
-				editor.setContent(awfulBrHack(result.html));
+				// Use an offset bookmark -- the default bookmark type is not preserved after unloading
+				// and reloading the editor.
+				// See https://github.com/tinymce/tinymce/issues/9736 for a brief description of the
+				// different bookmark types. An offset bookmark seems to have the smallest change
+				// when the note content is updated externally.
+				const offsetBookmarkId = 2;
+				const bookmark = editor.selection.getBookmark(offsetBookmarkId);
+				editor.setContent(awfulInitHack(result.html));
 
 				if (lastOnChangeEventInfo.current.contentKey !== props.contentKey) {
 					// Need to clear UndoManager to avoid this problem:
@@ -810,6 +1027,9 @@ const TinyMCE = (props: NoteBodyEditorProps, ref: any) => {
 					// times would result in an empty note.
 					// https://github.com/laurent22/joplin/issues/3534
 					editor.undoManager.reset();
+				} else {
+					// Restore the cursor location
+					editor.selection.bookmarkManager.moveToBookmark(bookmark);
 				}
 
 				lastOnChangeEventInfo.current = {
@@ -819,7 +1039,15 @@ const TinyMCE = (props: NoteBodyEditorProps, ref: any) => {
 				};
 			}
 
-			await loadDocumentAssets(editor, await props.allAssets(props.contentMarkupLanguage, { contentMaxWidthTarget: '.mce-content-body' }));
+			const allAssetsOptions: NoteStyleOptions = {
+				contentMaxWidthTarget: '.mce-content-body',
+				scrollbarSize: props.scrollbarSize,
+				themeId: props.contentMarkupLanguage === MarkupLanguage.Html ? 1 : null,
+				whiteBackgroundNoteRendering: props.whiteBackgroundNoteRendering,
+			};
+
+			const allAssets = await props.allAssets(props.contentMarkupLanguage, allAssetsOptions);
+			await loadDocumentAssets(props.themeId, editor, allAssets);
 
 			dispatchDidUpdate(editor);
 		};
@@ -829,7 +1057,8 @@ const TinyMCE = (props: NoteBodyEditorProps, ref: any) => {
 		return () => {
 			cancelled = true;
 		};
-	}, [editor, props.markupToHtml, props.allAssets, props.content, props.resourceInfos, props.contentKey]);
+		// eslint-disable-next-line @seiyab/react-hooks/exhaustive-deps -- Old code before rule was applied
+	}, [editor, props.themeId, props.scrollbarSize, props.markupToHtml, props.allAssets, props.content, props.resourceInfos, props.contentKey, props.contentMarkupLanguage, props.whiteBackgroundNoteRendering]);
 
 	useEffect(() => {
 		if (!editor) return () => {};
@@ -875,12 +1104,15 @@ const TinyMCE = (props: NoteBodyEditorProps, ref: any) => {
 	// Need to save the onChange handler to a ref to make sure
 	// we call the current one from setTimeout.
 	// https://github.com/facebook/react/issues/14010#issuecomment-433788147
+	// eslint-disable-next-line @typescript-eslint/ban-types -- Old code before rule was applied
 	const props_onChangeRef = useRef<Function>();
 	props_onChangeRef.current = props.onChange;
 
-	const prop_htmlToMarkdownRef = useRef<Function>();
+	// eslint-disable-next-line @typescript-eslint/ban-types -- Old code before rule was applied
+	const prop_htmlToMarkdownRef = useRef<HtmlToMarkdownHandler>();
 	prop_htmlToMarkdownRef.current = props.htmlToMarkdown;
 
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	const nextOnChangeEventInfo = useRef<any>(null);
 
 	async function execOnChangeEvent() {
@@ -889,6 +1121,7 @@ const TinyMCE = (props: NoteBodyEditorProps, ref: any) => {
 
 		nextOnChangeEventInfo.current = null;
 
+		resetLinkTooltips();
 		const contentMd = await prop_htmlToMarkdownRef.current(info.contentMarkupLanguage, info.editor.getContent(), info.contentOriginalCss);
 
 		lastOnChangeEventInfo.current.content = contentMd;
@@ -909,8 +1142,10 @@ const TinyMCE = (props: NoteBodyEditorProps, ref: any) => {
 		return () => {
 			void execOnChangeEvent();
 		};
+		// eslint-disable-next-line @seiyab/react-hooks/exhaustive-deps -- Old code before rule was applied
 	}, []);
 
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	const onChangeHandlerTimeoutRef = useRef<any>(null);
 
 	useEffect(() => {
@@ -939,6 +1174,7 @@ const TinyMCE = (props: NoteBodyEditorProps, ref: any) => {
 			}, 1000);
 		}
 
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 		function onExecCommand(event: any) {
 			const c: string = event.command;
 			if (!c) return;
@@ -953,7 +1189,15 @@ const TinyMCE = (props: NoteBodyEditorProps, ref: any) => {
 			//
 			// Any maybe others, so to catch them all we only check the prefix
 
-			const changeCommands = ['mceBlockQuote', 'ToggleJoplinChecklistItem', 'Bold', 'Italic', 'Underline', 'Paragraph'];
+			const changeCommands = [
+				'mceBlockQuote',
+				'ToggleJoplinChecklistItem',
+				'Bold',
+				'Italic',
+				'Underline',
+				'Paragraph',
+				'mceApplyTextcolor',
+			];
 
 			if (
 				changeCommands.includes(c) ||
@@ -966,6 +1210,17 @@ const TinyMCE = (props: NoteBodyEditorProps, ref: any) => {
 				onChangeHandler();
 			}
 		}
+
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+		const onSetAttrib = (event: EditorEvent<any>) => {
+			// Dispatch onChange when a link is edited
+			const target = Array.isArray(event.attrElm) ? event.attrElm[0] : event.attrElm;
+			if (target.nodeName === 'A') {
+				if (event.attrName === 'title' || event.attrName === 'href' || event.attrName === 'rel') {
+					onChangeHandler();
+				}
+			}
+		};
 
 		// Keypress means that a printable key (letter, digit, etc.) has been
 		// pressed so we want to always trigger onChange in this case
@@ -981,54 +1236,70 @@ const TinyMCE = (props: NoteBodyEditorProps, ref: any) => {
 		// onChange even though nothing is changed. The alternative would be to
 		// check the content before and after, but this is too slow, so let's
 		// keep it this way for now.
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 		function onKeyUp(event: any) {
 			if (['Backspace', 'Delete', 'Enter', 'Tab'].includes(event.key)) {
 				onChangeHandler();
 			}
 		}
 
-		async function onPaste(event: any) {
+		async function onPaste(event: ClipboardEvent) {
 			// We do not use the default pasting behaviour because the input has
 			// to be processed in various ways.
 			event.preventDefault();
 
-			const resourceMds = await handlePasteEvent(event);
-			if (resourceMds.length) {
-				const result = await markupToHtml.current(MarkupToHtml.MARKUP_LANGUAGE_MARKDOWN, resourceMds.join('\n'), markupRenderOptions({ bodyOnly: true }));
-				editor.insertContent(result.html);
-			} else {
-				const pastedText = event.clipboardData.getData('text/plain');
+			const pastedText = event.clipboardData.getData('text/plain');
 
-				if (BaseItem.isMarkdownTag(pastedText)) { // Paste a link to a note
+			// event.clipboardData.getData('text/html') wraps the
+			// content with <html><body></body></html>, which seems to
+			// be not supported in editor.insertContent().
+			//
+			// when pasting text with Ctrl+Shift+V, the format should be
+			// ignored. In this case,
+			// event.clipboardData.getData('text/html') returns an empty
+			// string, but the clipboard.readHTML() still returns the
+			// formatted text.
+			const pastedHtml = event.clipboardData.getData('text/html') ? clipboard.readHTML() : '';
+
+			const resourceMds = await getResourcesFromPasteEvent(event);
+
+			if (shouldPasteResources(pastedText, pastedHtml, resourceMds)) {
+				logger.info(`onPaste: pasting ${resourceMds.length} resources`);
+				if (resourceMds.length) {
+					const result = await markupToHtml.current(MarkupToHtml.MARKUP_LANGUAGE_MARKDOWN, resourceMds.join('\n'), markupRenderOptions({ bodyOnly: true }));
+					editor.insertContent(result.html);
+				}
+			} else {
+				if (BaseItem.isMarkdownTag(pastedText) || hasProtocol(pastedText, ['https', 'joplin', 'file'])) { // Paste a link to a note
+					logger.info('onPaste: pasting as a Markdown tag');
 					const result = await markupToHtml.current(MarkupToHtml.MARKUP_LANGUAGE_MARKDOWN, pastedText, markupRenderOptions({ bodyOnly: true }));
 					editor.insertContent(result.html);
 				} else { // Paste regular text
-					const pastedHtml = event.clipboardData.getData('text/html');
 					if (pastedHtml) { // Handles HTML
-						const modifiedHtml = await processPastedHtml(pastedHtml);
+						logger.info('onPaste: pasting as HTML');
+
+						const modifiedHtml = await processPastedHtml(
+							pastedHtml,
+							prop_htmlToMarkdownRef.current,
+							markupToHtml.current,
+						);
 						editor.insertContent(modifiedHtml);
 					} else { // Handles plain text
+						logger.info('onPaste: pasting as text');
 						pasteAsPlainText(pastedText);
 					}
-
-					// This code before was necessary to get undo working after
-					// pasting but it seems it's no longer necessary, so
-					// removing it for now. We also couldn't do it immediately
-					// it seems, or else nothing is added to the stack, so do it
-					// on the next frame.
-					//
-					// window.requestAnimationFrame(() =>
-					// editor.undoManager.add()); onChangeHandler();
 				}
 			}
 		}
 
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 		async function onCopy(event: any) {
 			const copiedContent = editor.selection.getContent();
 			copyHtmlToClipboard(copiedContent);
 			event.preventDefault();
 		}
 
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 		async function onCut(event: any) {
 			const selectedContent = editor.selection.getContent();
 			copyHtmlToClipboard(selectedContent);
@@ -1044,53 +1315,68 @@ const TinyMCE = (props: NoteBodyEditorProps, ref: any) => {
 			}
 		}
 
-		function onKeyDown(event: any) {
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+		async function onKeyDown(event: any) {
 			// It seems "paste as text" is handled automatically on Windows and Linux,
 			// so we need to run the below code only on macOS. If we were to run this
 			// on Windows/Linux, we would have this double-paste issue:
 			// https://github.com/laurent22/joplin/issues/4243
 
-			// Handle "paste as text". Note that when pressing CtrlOrCmd+Shift+V it's going
-			// to trigger the "keydown" event but not the "paste" event, so it's ok to process
-			// it here and we don't need to do anything special in onPaste
-			if (!shim.isWindows() && !shim.isLinux()) {
-				if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.code === 'KeyV') {
-					pasteAsPlainText();
-				}
+			// While "paste as text" functionality is handled by Windows and Linux, if we
+			// want to allow the user to customize the shortcut we need to prevent when it
+			// has the default value so it doesn't paste the content twice
+			// (one by the system and the other by our code)
+			if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.code === 'KeyV') {
+				event.preventDefault();
+				pasteAsPlainText(null);
 			}
 		}
 
-		editor.on('keyup', onKeyUp);
-		editor.on('keydown', onKeyDown);
-		editor.on('keypress', onKeypress);
-		editor.on('paste', onPaste);
-		editor.on('copy', onCopy);
+		function onPasteAsText() {
+			// clipboard.readText returns Markdown instead of text when copying content from
+			// the Rich Text Editor. When the user "Paste as text" he does not expect to see
+			// anything besides text, that is why we are stripping here before pasting
+			// https://github.com/laurent22/joplin/pull/8351
+			const clipboardWithoutMarkdown = stripMarkup(MarkupToHtml.MARKUP_LANGUAGE_MARKDOWN, clipboard.readText());
+			pasteAsPlainText(clipboardWithoutMarkdown);
+		}
+
+		editor.on(TinyMceEditorEvents.KeyUp, onKeyUp);
+		editor.on(TinyMceEditorEvents.KeyDown, onKeyDown);
+		editor.on(TinyMceEditorEvents.KeyPress, onKeypress);
+		editor.on(TinyMceEditorEvents.Paste, onPaste);
+		editor.on(TinyMceEditorEvents.PasteAsText, onPasteAsText);
+		editor.on(TinyMceEditorEvents.Copy, onCopy);
 		// `compositionend` means that a user has finished entering a Chinese
 		// (or other languages that require IME) character.
-		editor.on('compositionend', onChangeHandler);
-		editor.on('cut', onCut);
-		editor.on('joplinChange', onChangeHandler);
-		editor.on('Undo', onChangeHandler);
-		editor.on('Redo', onChangeHandler);
-		editor.on('ExecCommand', onExecCommand);
+		editor.on(TinyMceEditorEvents.CompositionEnd, onChangeHandler);
+		editor.on(TinyMceEditorEvents.Cut, onCut);
+		editor.on(TinyMceEditorEvents.JoplinChange, onChangeHandler);
+		editor.on(TinyMceEditorEvents.Undo, onChangeHandler);
+		editor.on(TinyMceEditorEvents.Redo, onChangeHandler);
+		editor.on(TinyMceEditorEvents.ExecCommand, onExecCommand);
+		editor.on(TinyMceEditorEvents.SetAttrib, onSetAttrib);
 
 		return () => {
 			try {
-				editor.off('keyup', onKeyUp);
-				editor.off('keydown', onKeyDown);
-				editor.off('keypress', onKeypress);
-				editor.off('paste', onPaste);
-				editor.off('copy', onCopy);
-				editor.off('compositionend', onChangeHandler);
-				editor.off('cut', onCut);
-				editor.off('joplinChange', onChangeHandler);
-				editor.off('Undo', onChangeHandler);
-				editor.off('Redo', onChangeHandler);
-				editor.off('ExecCommand', onExecCommand);
+				editor.off(TinyMceEditorEvents.KeyUp, onKeyUp);
+				editor.off(TinyMceEditorEvents.KeyDown, onKeyDown);
+				editor.off(TinyMceEditorEvents.KeyPress, onKeypress);
+				editor.off(TinyMceEditorEvents.Paste, onPaste);
+				editor.off(TinyMceEditorEvents.PasteAsText, onPasteAsText);
+				editor.off(TinyMceEditorEvents.Copy, onCopy);
+				editor.off(TinyMceEditorEvents.CompositionEnd, onChangeHandler);
+				editor.off(TinyMceEditorEvents.Cut, onCut);
+				editor.off(TinyMceEditorEvents.JoplinChange, onChangeHandler);
+				editor.off(TinyMceEditorEvents.Undo, onChangeHandler);
+				editor.off(TinyMceEditorEvents.Redo, onChangeHandler);
+				editor.off(TinyMceEditorEvents.ExecCommand, onExecCommand);
+				editor.off(TinyMceEditorEvents.SetAttrib, onSetAttrib);
 			} catch (error) {
 				console.warn('Error removing events', error);
 			}
 		};
+		// eslint-disable-next-line @seiyab/react-hooks/exhaustive-deps -- Old code before rule was applied
 	}, [props.onWillChange, props.onChange, props.contentMarkupLanguage, props.contentOriginalCss, editor]);
 
 	// -----------------------------------------------------------------------------------------
@@ -1101,11 +1387,23 @@ const TinyMCE = (props: NoteBodyEditorProps, ref: any) => {
 
 	useEffect(() => {
 		return () => {
-			if (editorRef.current) editorRef.current.remove();
+			if (!editorRef.current) return;
+
+			const ownerDocument = editorRef.current.getContainer().ownerDocument;
+			const parentWindow = ownerDocument.defaultView;
+
+			// Calling .remove after the parent window is closed throws an Error
+			// related to DOM API access. Since closing the window also removes the editor,
+			// it shouldn't be necessary to call .remove in this case:
+			if (parentWindow) {
+				editorRef.current.remove();
+			}
 		};
 	}, []);
 
-	function renderExtraToolbarButton(key: string, info: ToolbarButtonInfo) {
+	function renderExtraToolbarButton(key: string, info: ToolbarItem) {
+		if (info.type === 'separator') return null;
+
 		return <ToolbarButton
 			key={key}
 			themeId={props.themeId}
@@ -1134,7 +1432,7 @@ const TinyMCE = (props: NoteBodyEditorProps, ref: any) => {
 		for (const info of props.noteToolbarButtonInfos) {
 			if (leftButtonCommandNames.includes(info.name)) continue;
 
-			if (info.name === 'toggleEditors') {
+			if (info.type === 'button' && info.name === 'toggleEditors') {
 				buttons.push(<ToggleEditorsButton
 					key={info.name}
 					value={ToggleEditorsButtonValue.RichText}
@@ -1171,12 +1469,15 @@ const TinyMCE = (props: NoteBodyEditorProps, ref: any) => {
 		);
 	}
 
+	const containerId = useMemo(() => {
+		return `tinymce-container-${Math.ceil(Math.random() * 1000)}-${Date.now()}`;
+	}, []);
 	return (
 		<div style={styles.rootStyle} className="joplin-tinymce">
 			{renderDisabledOverlay()}
 			{renderLeftExtraToolbarButtons()}
 			{renderRightExtraToolbarButtons()}
-			<div style={{ width: '100%', height: '100%' }} id={rootIdRef.current}/>
+			<div style={{ width: '100%', height: '100%' }} id={containerId} ref={setEditorContainer}/>
 		</div>
 	);
 };

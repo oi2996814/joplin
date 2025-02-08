@@ -1,5 +1,6 @@
 
 // TODO: copied from string-utils
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 function formatCssSize(v: any): string {
 	if (typeof v === 'string') {
 		if (v.includes('px') || v.includes('em') || v.includes('%')) return v;
@@ -10,8 +11,69 @@ function formatCssSize(v: any): string {
 export interface Options {
 	contentMaxWidth?: number;
 	contentMaxWidthTarget?: string;
+	scrollbarSize?: number;
+	themeId?: number;
+	whiteBackgroundNoteRendering?: boolean;
 }
 
+const notLoadedCss = `
+	.not-loaded-resource img {
+		width: 1.15em;
+		height: 1.15em;
+		background: white;
+		padding: 2px !important;
+		border-radius: 2px;
+		box-shadow: 0 1px 3px #000000aa;
+	}
+
+	a.not-loaded-resource img {
+		margin-right: .2em;
+	}
+
+	a.not-loaded-resource {
+		display: flex;
+		flex-direction: row;
+		align-items: center;
+	}
+`;
+
+// If we are viewing an HTML note, it means it comes from the web clipper or
+// emil-to-note, in which case we don't apply any specific theme. We just need
+// to ensure the background is white so that we don't end up with a dark theme
+// and dark font for example. https://github.com/laurent22/joplin/issues/9511
+export const whiteBackgroundNoteStyle = () => {
+	return `
+		body {
+			background-color: #ffffff;
+		}
+
+		${notLoadedCss}
+
+		/* TinyMCE adds a dashed border for tables that have no borders
+		to make it easier to view where the cells are and edit them.
+		However HTML notes may contain many nested tables used for
+		layout and we also consider that these notes are more or less
+		read-only. Because of this, we remove the dashed lines in this
+		case as it makes the note more readable. */
+
+		.mce-item-table:not([border]),
+		.mce-item-table:not([border]) caption,
+		.mce-item-table:not([border]) td,
+		.mce-item-table:not([border]) th,
+		.mce-item-table[border="0"],
+		.mce-item-table[border="0"] caption,
+		.mce-item-table[border="0"] td,
+		.mce-item-table[border="0"] th,
+		table[style*="border-width: 0px"],
+		table[style*="border-width: 0px"] caption,
+		table[style*="border-width: 0px"] td,
+		table[style*="border-width: 0px"] th {
+			border: none !important;
+		}
+	`;
+};
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 export default function(theme: any, options: Options = null) {
 	options = {
 		contentMaxWidth: 0,
@@ -20,7 +82,7 @@ export default function(theme: any, options: Options = null) {
 
 	theme = theme ? theme : {};
 
-	const fontFamily = '\'Avenir\', \'Arial\', sans-serif';
+	const fontFamily = '\'Avenir Next\', \'Avenir\', \'Arial\', sans-serif';
 
 	const maxWidthTarget = options.contentMaxWidthTarget ? options.contentMaxWidthTarget : '#rendered-md';
 	const maxWidthCss = options.contentMaxWidth ? `
@@ -49,9 +111,6 @@ export default function(theme: any, options: Options = null) {
 			padding-bottom: ${formatCssSize(theme.bodyPaddingBottom)};
 			padding-top: ${formatCssSize(theme.bodyPaddingTop)};
 		}
-		strong {
-			color: ${theme.colorBright};
-		}
 		kbd {
 			border: 1px solid ${theme.codeBorderColor};
 			box-shadow: inset 0 -1px 0 ${theme.codeBorderColor};
@@ -59,9 +118,17 @@ export default function(theme: any, options: Options = null) {
 			border-radius: 3px;
 			background-color: ${theme.codeBackgroundColor};
 		}
+
+		:root {
+			--scrollbar-size: ${Number(options.scrollbarSize ?? 7)}px;
+		}
+
 		::-webkit-scrollbar {
-			width: 7px;
-			height: 7px;
+			width: var(--scrollbar-size);
+			height: var(--scrollbar-size);
+		}
+		::-webkit-scrollbar-thumb {
+			border-radius: calc(var(--scrollbar-size) / 2);
 		}
 		::-webkit-scrollbar-corner {
 			background: none;
@@ -70,14 +137,13 @@ export default function(theme: any, options: Options = null) {
 			border: none;
 		}
 		::-webkit-scrollbar-thumb {
-			background: rgba(100, 100, 100, 0.3); 
-			border-radius: 5px;
+			background: ${theme.scrollbarThumbColor}; 
 		}
 		::-webkit-scrollbar-track:hover {
 			background: rgba(0, 0, 0, 0.1); 
 		}
 		::-webkit-scrollbar-thumb:hover {
-			background: rgba(100, 100, 100, 0.7); 
+			background: ${theme.scrollbarThumbColorHover}; 
 		}
 
 		${maxWidthCss}
@@ -129,6 +195,7 @@ export default function(theme: any, options: Options = null) {
 		}
 		h3 {
 			font-size: 1.1em;
+			font-weight: bold;
 		}
 		h4, h5, h6 {
 			font-size: 1em;
@@ -175,7 +242,7 @@ export default function(theme: any, options: Options = null) {
      * instead of the svg width, height property you must use a viewbox here, 0 0 1536 1792 is typically the actual size of the icon
      * each line begins with the pre-amble -webkit-mask: url("data:image/svg+xml;utf8,
      * and of course finishes with ");
-     * to precvent artifacts it is also necessary to include -webkit-mask-repeat: no-repeat;
+     * to prevent artifacts it is also necessary to include -webkit-mask-repeat: no-repeat;
      * on the following line
      * */
 		.fa-joplin {
@@ -298,24 +365,7 @@ export default function(theme: any, options: Options = null) {
 			color: black;
 		}
 
-		.not-loaded-resource img {
-			width: 1.15em;
-			height: 1.15em;
-			background: white;
-			padding: 2px !important;
-			border-radius: 2px;
-			box-shadow: 0 1px 3px #000000aa;
-		}
-
-		a.not-loaded-resource img {
-			margin-right: .2em;
-		}
-
-		a.not-loaded-resource {
-			display: flex;
-			flex-direction: row;
-			align-items: center;
-		}
+		${notLoadedCss}
 
 		.md-checkbox input[type=checkbox]:checked {
 			opacity: 0.7;
@@ -335,8 +385,8 @@ export default function(theme: any, options: Options = null) {
 		}
 
 		mark {
-			background: #F7D26E;
-			color: black;
+			background: ${theme.markHighlightBackgroundColor};
+			color: ${theme.searchMarkerColor};
 		}
 
 		/* =============================================== */
@@ -377,7 +427,12 @@ export default function(theme: any, options: Options = null) {
 		}
 
 		.media-player.media-pdf {
-			min-height: 100vh;
+			min-height: 35rem;
+			width: 100%;
+			max-width: 1000px;
+			margin: 0;
+			border: 0;
+			display: block;
 		}
 
 		/* Clear the CODE style if the element is within a joplin-editable block */
@@ -393,6 +448,11 @@ export default function(theme: any, options: Options = null) {
 		/* https://github.com/laurent22/joplin/issues/5740 */
 		pre.hljs {
 			overflow-x: auto;
+		}
+
+		.joplin-table-wrapper{
+			overflow-x: auto;
+			overflow-y: hidden;
 		}
 
 		/* =============================================== */

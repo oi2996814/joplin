@@ -1,4 +1,3 @@
-
 const { setupDatabaseAndSynchronizer, switchClient, supportDir } = require('./testing/test-utils.js');
 const shim = require('./shim').default;
 const { enexXmlToHtml } = require('./import-enex-html-gen.js');
@@ -29,17 +28,15 @@ const beautifyHtml = (html) => {
 	});
 };
 
-/**
- * Tests the importer for a single note, checking that the result of
- * processing the given `.enex` input file matches the contents of the given
- * `.html` file.
- *
- * Note that this does not test the importing of an entire exported `.enex`
- * archive, but rather a single node of such a file. Thus, the test data files
- * (e.g. `./enex_to_html/code1.enex`) correspond to the contents of a single
- * `<note>...</note>` node in an `.enex` file already extracted from
- * `<content><![CDATA[...]]</content>`.
- */
+// Tests the importer for a single note, checking that the result of
+// processing the given `.enex` input file matches the contents of the given
+// `.html` file.
+//
+// Note that this does not test the importing of an entire exported `.enex`
+// archive, but rather a single node of such a file. Thus, the test data files
+// (e.g. `./enex_to_html/code1.enex`) correspond to the contents of a single
+// `<note>...</note>` node in an `.enex` file already extracted from
+// `<content><![CDATA[...]]</content>`.
 const compareOutputToExpected = (options) => {
 	options = {
 		resources: [],
@@ -50,6 +47,7 @@ const compareOutputToExpected = (options) => {
 	const outputFile = fileWithPath(`${options.testName}.html`);
 	const testTitle = `should convert from Enex to Html: ${options.testName}`;
 
+	// eslint-disable-next-line jest/require-top-level-describe
 	it(testTitle, (async () => {
 		const enexInput = await shim.fsDriver().readFile(inputFile);
 		const expectedOutput = await shim.fsDriver().readFile(outputFile);
@@ -58,15 +56,18 @@ const compareOutputToExpected = (options) => {
 	}));
 };
 
-describe('EnexToHtml', function() {
-	beforeEach(async (done) => {
+describe('EnexToHtml', () => {
+	beforeEach(async () => {
 		await setupDatabaseAndSynchronizer(1);
 		await switchClient(1);
-		done();
 	});
 
 	compareOutputToExpected({
-		testName: 'checklist-list',
+		testName: 'checkbox-list',
+	});
+
+	compareOutputToExpected({
+		testName: 'checklist',
 	});
 
 	compareOutputToExpected({

@@ -1,5 +1,5 @@
-const { BaseCommand } = require('./base-command.js');
-const { app } = require('./app.js');
+const BaseCommand = require('./base-command').default;
+const app = require('./app').default;
 const { _ } = require('@joplin/lib/locale');
 const Note = require('@joplin/lib/models/Note').default;
 

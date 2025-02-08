@@ -1,8 +1,8 @@
-const Logger = require('./Logger').default;
+const Logger = require('@joplin/utils/Logger').default;
 const shim = require('./shim').default;
 const JoplinError = require('./JoplinError').default;
 const time = require('./time').default;
-const EventDispatcher = require('./EventDispatcher');
+const EventDispatcher = require('./EventDispatcher').default;
 
 class DropboxApi {
 	constructor(options) {
@@ -139,9 +139,9 @@ class DropboxApi {
 
 				// console.info(method + ' ' + url);
 
-				if (options.source == 'file' && (method == 'POST' || method == 'PUT')) {
+				if (options.source === 'file' && (method === 'POST' || method === 'PUT')) {
 					response = await shim.uploadBlob(url, fetchOptions);
-				} else if (options.target == 'string') {
+				} else if (options.target === 'string') {
 					response = await shim.fetch(url, fetchOptions);
 				} else {
 					// file

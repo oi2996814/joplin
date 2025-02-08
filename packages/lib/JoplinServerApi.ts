@@ -3,9 +3,10 @@ import { _ } from './locale';
 const { rtrimSlashes } = require('./path-utils.js');
 import JoplinError from './JoplinError';
 import { Env } from './models/Setting';
-import Logger from './Logger';
+import Logger from '@joplin/utils/Logger';
 import personalizedUserContentBaseUrl from './services/joplinServer/personalizedUserContentBaseUrl';
 import { getHttpStatusMessage } from './net-utils';
+import { getApplicationInformation } from './services/joplinCloudUtils';
 const { stringify } = require('query-string');
 
 const logger = Logger.create('JoplinServerApi');
@@ -28,7 +29,7 @@ enum ExecOptionsTarget {
 	File = 'file',
 }
 
-interface ExecOptions {
+export interface ExecOptions {
 	responseFormat?: ExecOptionsResponseFormat;
 	target?: ExecOptionsTarget;
 	path?: string;
@@ -44,13 +45,14 @@ export default class JoplinServerApi {
 
 	private options_: Options;
 	private session_: Session;
-	private debugRequests_: boolean = false;
+	private debugRequests_ = false;
+	private debugRequestsShowPasswords_ = false;
 
 	public constructor(options: Options) {
 		this.options_ = options;
 
-		if (options.env === Env.Dev) {
-			// this.debugRequests_ = true;
+		if (options.env !== Env.Dev) {
+			this.debugRequestsShowPasswords_ = false;
 		}
 	}
 
@@ -62,13 +64,31 @@ export default class JoplinServerApi {
 		return personalizedUserContentBaseUrl(userId, this.baseUrl(), this.options_.userContentBaseUrl());
 	}
 
+	private async getClientInfo() {
+		const { platform, type } = await getApplicationInformation();
+		const clientInfo = {
+			platform,
+			type,
+			version: shim.appVersion(),
+		};
+
+		return clientInfo;
+	}
+
 	private async session() {
 		if (this.session_) return this.session_;
+
+		const clientInfo = await this.getClientInfo();
+
+		if (!this.options_.username() || !this.options_.password()) {
+			return null;
+		}
 
 		try {
 			this.session_ = await this.exec_('POST', 'api/sessions', null, {
 				email: this.options_.username(),
 				password: this.options_.password(),
+				...clientInfo,
 			});
 
 			return this.session_;
@@ -87,29 +107,32 @@ export default class JoplinServerApi {
 		return this.session_ ? this.session_.user_id : '';
 	}
 
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	public static connectionErrorMessage(error: any) {
 		const msg = error && error.message ? error.message : 'Unknown error';
 		return _('Could not connect to Joplin Server. Please check the Synchronisation options in the config screen. Full error was:\n\n%s', msg);
 	}
 
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	private hidePasswords(o: any): any {
 		if (typeof o === 'string') {
 			try {
 				const output = JSON.parse(o);
 				if (!output) return o;
-				if (output.password) output.password = '******';
+				if (output.password && !this.debugRequestsShowPasswords_) output.password = '******';
 				return JSON.stringify(output);
 			} catch (error) {
 				return o;
 			}
 		} else {
 			const output = { ...o };
-			if (output.password) output.password = '******';
-			if (output['X-API-AUTH']) output['X-API-AUTH'] = '******';
+			if (output.password && !this.debugRequestsShowPasswords_) output.password = '******';
+			if (output['X-API-AUTH'] && !this.debugRequestsShowPasswords_) output['X-API-AUTH'] = '******';
 			return output;
 		}
 	}
 
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 	private requestToCurl_(url: string, options: any) {
 		const output = [];
 		output.push('curl');
@@ -131,7 +154,8 @@ export default class JoplinServerApi {
 		return output.join(' ');
 	}
 
-	private async exec_(method: string, path: string = '', query: Record<string, any> = null, body: any = null, headers: any = null, options: ExecOptions = null) {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+	private async exec_(method: string, path = '', query: Record<string, any> = null, body: any = null, headers: any = null, options: ExecOptions = null) {
 		if (headers === null) headers = {};
 		if (options === null) options = {};
 		if (!options.responseFormat) options.responseFormat = ExecOptionsResponseFormat.Json;
@@ -145,6 +169,7 @@ export default class JoplinServerApi {
 		if (sessionId) headers['X-API-AUTH'] = sessionId;
 		headers['X-API-MIN-VERSION'] = '2.6.0'; // Need server 2.6 for new lock support
 
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 		const fetchOptions: any = {};
 		fetchOptions.headers = headers;
 		fetchOptions.method = method;
@@ -175,15 +200,16 @@ export default class JoplinServerApi {
 				logger.debug(this.requestToCurl_(url, fetchOptions));
 			}
 
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 			let response: any = null;
 
-			if (options.source == 'file' && (method == 'POST' || method == 'PUT')) {
+			if (options.source === 'file' && (method === 'POST' || method === 'PUT')) {
 				if (fetchOptions.path) {
 					const fileStat = await shim.fsDriver().stat(fetchOptions.path);
 					if (fileStat) fetchOptions.headers['Content-Length'] = `${fileStat.size}`;
 				}
 				response = await shim.uploadBlob(url, fetchOptions);
-			} else if (options.target == 'string') {
+			} else if (options.target === 'string') {
 				if (typeof body === 'string') fetchOptions.headers['Content-Length'] = `${shim.stringByteLength(body)}`;
 				response = await shim.fetch(url, fetchOptions);
 			} else {
@@ -202,13 +228,14 @@ export default class JoplinServerApi {
 			};
 
 			// Creates an error object with as much data as possible as it will appear in the log, which will make debugging easier
-			const newError = (message: string, code: number = 0) => {
+			const newError = (message: string, code = 0) => {
 				// Gives a shorter response for error messages. Useful for cases where a full HTML page is accidentally loaded instead of
 				// JSON. That way the error message will still show there's a problem but without filling up the log or screen.
 				// return new JoplinError(`${method} ${path}: ${message} (${code}): ${shortResponseText}`, code);
 				return new JoplinError(message, code, `${method} ${path}: ${message} (${code}): ${shortResponseText()}`);
 			};
 
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 			let responseJson_: any = null;
 			const loadResponseJson = async () => {
 				if (!responseText) return null;
@@ -267,7 +294,8 @@ export default class JoplinServerApi {
 		}
 	}
 
-	public async exec(method: string, path: string = '', query: Record<string, any> = null, body: any = null, headers: any = null, options: ExecOptions = null) {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+	public async exec(method: string, path = '', query: Record<string, any> = null, body: any = null, headers: any = null, options: ExecOptions = null) {
 		for (let i = 0; i < 2; i++) {
 			try {
 				const response = await this.exec_(method, path, query, body, headers, options);
@@ -283,4 +311,7 @@ export default class JoplinServerApi {
 		}
 	}
 
+	public async loadSession() {
+		await this.session();
+	}
 }

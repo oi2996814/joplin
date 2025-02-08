@@ -1,4 +1,5 @@
-import { execCommand2, rootDir, gitPullTry, completeReleaseWithChangelog } from './tool-utils';
+import { execCommand } from '@joplin/utils';
+import { rootDir, gitPullTry, completeReleaseWithChangelog } from './tool-utils';
 
 const serverDir = `${rootDir}/packages/server`;
 
@@ -12,11 +13,11 @@ async function main() {
 	await gitPullTry();
 
 	process.chdir(serverDir);
-	const version = (await execCommand2('yarn version patch')).trim();
+	const version = (await execCommand('npm version patch')).trim();
 	const versionSuffix = ''; // isPreRelease ? '-beta' : '';
 	const tagName = `server-${version}${versionSuffix}`;
 
-	const changelogPath = `${rootDir}/readme/changelog_server.md`;
+	const changelogPath = `${rootDir}/readme/about/changelog/server.md`;
 
 	await completeReleaseWithChangelog(changelogPath, version, tagName, 'Server', false);
 }

@@ -1,5 +1,6 @@
 import * as fs from 'fs-extra';
 import * as path from 'path';
+import yargs = require('yargs');
 
 const rootDir = path.dirname(path.dirname(__dirname));
 
@@ -32,15 +33,19 @@ async function updatePackageVersion(packageFilePath: string, majorMinorVersion: 
 	}
 
 	if (options.updateDependenciesVersion) {
-		for (const [name] of Object.entries(content.dependencies)) {
-			if (isJoplinPackage(name)) {
-				content.dependencies[name] = `~${majorMinorVersion}`;
+		if (content.dependencies) {
+			for (const [name] of Object.entries(content.dependencies)) {
+				if (isJoplinPackage(name)) {
+					content.dependencies[name] = `~${majorMinorVersion}`;
+				}
 			}
 		}
 
-		for (const [name] of Object.entries(content.devDependencies)) {
-			if (isJoplinPackage(name)) {
-				content.devDependencies[name] = `~${majorMinorVersion}`;
+		if (content.devDependencies) {
+			for (const [name] of Object.entries(content.devDependencies)) {
+				if (isJoplinPackage(name)) {
+					content.devDependencies[name] = `~${majorMinorVersion}`;
+				}
 			}
 		}
 	}
@@ -51,7 +56,7 @@ async function updatePackageVersion(packageFilePath: string, majorMinorVersion: 
 async function updateGradleVersion(filePath: string, majorMinorVersion: string) {
 	const contentText = await fs.readFile(filePath, 'utf8');
 
-	const newContent = contentText.replace(/(versionName\s+")(\d+?\.\d+?)(\.\d+")/, function(_match, prefix, version, suffix) {
+	const newContent = contentText.replace(/(versionName\s+")(\d+?\.\d+?)(\.\d+")/, (_match, prefix, version, suffix) => {
 		if (version === majorMinorVersion) return prefix + version + suffix;
 		return `${prefix + majorMinorVersion}.0"`;
 	});
@@ -65,7 +70,7 @@ async function updateCodeProjVersion(filePath: string, majorMinorVersion: string
 	const contentText = await fs.readFile(filePath, 'utf8');
 
 	// MARKETING_VERSION = 10.1.0;
-	const newContent = contentText.replace(/(MARKETING_VERSION = )(\d+\.\d+)(\.\d+;)/g, function(_match, prefix, version, suffix) {
+	const newContent = contentText.replace(/(MARKETING_VERSION = )(\d+\.\d+)(\.\d+;)/g, (_match, prefix, version, suffix) => {
 		if (version === majorMinorVersion) return prefix + version + suffix;
 		return `${prefix + majorMinorVersion}.0;`;
 	});
@@ -103,13 +108,17 @@ function iosVersionHack(majorMinorVersion: string) {
 }
 
 async function main() {
-	const argv: any = require('yargs').parserConfiguration({
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+	const argv: any = yargs.parserConfiguration({
 		'parse-numbers': false,
+		'parse-positional-numbers': false,
 	}).argv;
 
 	if (!argv._ || !argv._.length) throw new Error('Please specify the major.minor version, eg. 1.2');
 
 	const majorMinorVersion = argv._[0];
+
+	console.info(`New version: ${majorMinorVersion}`);
 
 	const options: Options = {
 		updateVersion: argv.updateVersion !== '0',
@@ -120,13 +129,21 @@ async function main() {
 
 	await updatePackageVersion(`${rootDir}/packages/app-cli/package.json`, majorMinorVersion, options);
 	await updatePackageVersion(`${rootDir}/packages/app-desktop/package.json`, majorMinorVersion, options);
+	await updatePackageVersion(`${rootDir}/packages/app-mobile/package.json`, majorMinorVersion, options);
 	await updatePackageVersion(`${rootDir}/packages/generator-joplin/package.json`, majorMinorVersion, options);
 	await updatePackageVersion(`${rootDir}/packages/htmlpack/package.json`, majorMinorVersion, options);
 	await updatePackageVersion(`${rootDir}/packages/lib/package.json`, majorMinorVersion, options);
+	await updatePackageVersion(`${rootDir}/packages/pdf-viewer/package.json`, majorMinorVersion, options);
 	await updatePackageVersion(`${rootDir}/packages/plugin-repo-cli/package.json`, majorMinorVersion, options);
+	await updatePackageVersion(`${rootDir}/packages/react-native-alarm-notification/package.json`, majorMinorVersion, options);
+	await updatePackageVersion(`${rootDir}/packages/react-native-saf-x/package.json`, majorMinorVersion, options);
 	await updatePackageVersion(`${rootDir}/packages/renderer/package.json`, majorMinorVersion, options);
 	await updatePackageVersion(`${rootDir}/packages/server/package.json`, majorMinorVersion, options);
 	await updatePackageVersion(`${rootDir}/packages/tools/package.json`, majorMinorVersion, options);
+	await updatePackageVersion(`${rootDir}/packages/utils/package.json`, majorMinorVersion, options);
+	await updatePackageVersion(`${rootDir}/packages/onenote-converter/package.json`, majorMinorVersion, options);
+	await updatePackageVersion(`${rootDir}/packages/default-plugins/package.json`, majorMinorVersion, options);
+	await updatePackageVersion(`${rootDir}/packages/editor/package.json`, majorMinorVersion, options);
 
 	if (options.updateVersion) {
 		await updateGradleVersion(`${rootDir}/packages/app-mobile/android/app/build.gradle`, majorMinorVersion);
@@ -135,7 +152,7 @@ async function main() {
 		await updatePluginGeneratorTemplateVersion(`${rootDir}/packages/generator-joplin/generators/app/templates/src/manifest.json`, majorMinorVersion);
 	}
 
-	console.info('Version numbers have been updated. Consider running `yarn i` to update the lock files');
+	console.info('Version numbers have been updated. Consider running `yarn install` to update the lock files');
 }
 
 main().catch((error) => {

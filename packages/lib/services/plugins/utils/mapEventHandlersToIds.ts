@@ -1,9 +1,11 @@
 let eventHandlerIndex_ = 1;
 
 export interface EventHandlers {
+	// eslint-disable-next-line @typescript-eslint/ban-types -- Old code before rule was applied
 	[key: string]: Function;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 export default function mapEventHandlersToIds(arg: any, eventHandlers: EventHandlers) {
 	if (Array.isArray(arg)) {
 		for (let i = 0; i < arg.length; i++) {

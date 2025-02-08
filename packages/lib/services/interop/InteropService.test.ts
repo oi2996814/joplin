@@ -1,5 +1,5 @@
 import InteropService from '../../services/interop/InteropService';
-import { CustomExportContext, CustomImportContext, Module, ModuleType } from '../../services/interop/types';
+import { CustomExportContext, CustomImportContext, ExportModuleOutputFormat, ModuleType } from '../../services/interop/types';
 import shim from '../../shim';
 import { fileContentEqual, setupDatabaseAndSynchronizer, switchClient, checkThrowAsync, exportDir, supportDir } from '../../testing/test-utils';
 import Folder from '../../models/Folder';
@@ -7,9 +7,12 @@ import Note from '../../models/Note';
 import Tag from '../../models/Tag';
 import Resource from '../../models/Resource';
 import * as fs from 'fs-extra';
-import { NoteEntity, ResourceEntity } from '../database/types';
+import { FolderEntity, NoteEntity, ResourceEntity } from '../database/types';
 import { ModelType } from '../../BaseModel';
-const ArrayUtils = require('../../ArrayUtils');
+import * as ArrayUtils from '../../ArrayUtils';
+import InteropService_Importer_Custom from './InteropService_Importer_Custom';
+import InteropService_Exporter_Custom from './InteropService_Exporter_Custom';
+import Module, { makeExportModule, makeImportModule } from './Module';
 
 async function recreateExportDir() {
 	const dir = exportDir();
@@ -17,6 +20,7 @@ async function recreateExportDir() {
 	await fs.mkdirp(dir);
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 function fieldsEqual(model1: any, model2: any, fieldNames: string[]) {
 	for (let i = 0; i < fieldNames.length; i++) {
 		const f = fieldNames[i];
@@ -27,6 +31,7 @@ function fieldsEqual(model1: any, model2: any, fieldNames: string[]) {
 function memoryExportModule() {
 	interface Item {
 		type: number;
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 		object: any;
 	}
 
@@ -47,46 +52,47 @@ function memoryExportModule() {
 		resources: [],
 	};
 
-	const module: Module = {
-		type: ModuleType.Exporter,
+	const module: Module = makeExportModule({
 		description: 'Memory Export Module',
-		format: 'memory',
+		format: ExportModuleOutputFormat.Memory,
 		fileExtensions: ['memory'],
-		isCustom: true,
+	}, () => {
+		return new InteropService_Exporter_Custom({
+			onInit: async (context: CustomExportContext) => {
+				result.destPath = context.destPath;
+			},
 
-		onInit: async (context: CustomExportContext) => {
-			result.destPath = context.destPath;
-		},
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+			onProcessItem: async (_context: CustomExportContext, itemType: number, item: any) => {
+				result.items.push({
+					type: itemType,
+					object: item,
+				});
+			},
 
-		onProcessItem: async (_context: CustomExportContext, itemType: number, item: any) => {
-			result.items.push({
-				type: itemType,
-				object: item,
-			});
-		},
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+			onProcessResource: async (_context: CustomExportContext, resource: any, filePath: string) => {
+				result.resources.push({
+					filePath: filePath,
+					object: resource,
+				});
+			},
 
-		onProcessResource: async (_context: CustomExportContext, resource: any, filePath: string) => {
-			result.resources.push({
-				filePath: filePath,
-				object: resource,
-			});
-		},
-
-		onClose: async (_context: CustomExportContext) => {
-			// nothing
-		},
-	};
+			onClose: async (_context: CustomExportContext) => {
+				// nothing
+			},
+		});
+	});
 
 	return { result, module };
 }
 
-describe('services_InteropService', function() {
+describe('services_InteropService', () => {
 
-	beforeEach(async (done) => {
+	beforeEach(async () => {
 		await setupDatabaseAndSynchronizer(1);
 		await switchClient(1);
 		await recreateExportDir();
-		done();
 	});
 
 	it('should export and import folders', (async () => {
@@ -137,6 +143,7 @@ describe('services_InteropService', function() {
 		await service.import({ path: filePath });
 
 		const allFolders = await Folder.all();
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 		expect(allFolders.map((f: any) => f.title).sort().join(' - ')).toBe('folder - folder (1)');
 	}));
 
@@ -414,7 +421,7 @@ describe('services_InteropService', function() {
 
 		const outDir = exportDir();
 
-		await service.export({ path: outDir, format: 'md', sourceNoteIds: [note11.id, note21.id] });
+		await service.export({ path: outDir, format: ExportModuleOutputFormat.Markdown, sourceNoteIds: [note11.id, note21.id] });
 
 		// verify that the md files exist
 		expect(await shim.fsDriver().exists(`${outDir}/folder1`)).toBe(true);
@@ -439,7 +446,7 @@ describe('services_InteropService', function() {
 
 		const outDir = exportDir();
 
-		await service.export({ path: outDir, format: 'md' });
+		await service.export({ path: outDir, format: ExportModuleOutputFormat.Markdown });
 
 		expect(await shim.fsDriver().exists(`${outDir}/folder1/生活.md`)).toBe(true);
 		expect(await shim.fsDriver().exists(`${outDir}/folder1/生活-1.md`)).toBe(true);
@@ -459,7 +466,7 @@ describe('services_InteropService', function() {
 
 		await service.export({
 			path: exportDir(),
-			format: 'md',
+			format: ExportModuleOutputFormat.Markdown,
 			sourceFolderIds: [folder1.id],
 		});
 
@@ -476,7 +483,7 @@ describe('services_InteropService', function() {
 
 		await service.export({
 			path: exportDir(),
-			format: 'md',
+			format: ExportModuleOutputFormat.Markdown,
 			sourceFolderIds: [folder1.id],
 			includeConflicts: false,
 		});
@@ -488,7 +495,7 @@ describe('services_InteropService', function() {
 
 		await service.export({
 			path: exportDir(),
-			format: 'md',
+			format: ExportModuleOutputFormat.Markdown,
 			sourceFolderIds: [folder1.id],
 			includeConflicts: true,
 		});
@@ -513,27 +520,38 @@ describe('services_InteropService', function() {
 
 		const result = await service.export({
 			path: exportDir(),
-			format: 'md',
+			format: ExportModuleOutputFormat.Markdown,
 		});
 
 		expect(result.warnings.length).toBe(0);
 	}));
 
 	it('should not export certain note properties', (async () => {
-		const folder = await Folder.save({ title: 'folder' });
-		await Note.save({ title: 'note', is_shared: 1, share_id: 'someid', parent_id: folder.id });
+		const folder = await Folder.save({ title: 'folder', share_id: 'some_id', is_shared: 1 });
+		let note = await Note.save({ title: 'note', is_shared: 1, share_id: 'someid', parent_id: folder.id });
+		note = await shim.attachFileToNote(note, `${supportDir}/photo.jpg`);
+		const resourceId = (await Note.linkedResourceIds(note.body))[0];
+		await Resource.save({ id: resourceId, share_id: 'some_id', is_shared: 1 });
 
 		const service = InteropService.instance();
 		const { result, module } = memoryExportModule();
 		service.registerModule(module);
 
 		await service.export({
-			format: 'memory',
+			format: ExportModuleOutputFormat.Memory,
 		});
 
 		const exportedNote = (result.items.find(i => i.type === ModelType.Note)).object as NoteEntity;
 		expect(exportedNote.share_id).toBe('');
 		expect(exportedNote.is_shared).toBe(0);
+
+		const exportedFolder = (result.items.find(i => i.type === ModelType.Folder)).object as FolderEntity;
+		expect(exportedFolder.share_id).toBe('');
+		expect(exportedFolder.is_shared).toBe(0);
+
+		const exportedResource = (result.items.find(i => i.type === ModelType.Resource)).object as ResourceEntity;
+		expect(exportedResource.share_id).toBe('');
+		expect(exportedResource.is_shared).toBe(0);
 	}));
 
 	it('should allow registering new import modules', (async () => {
@@ -545,18 +563,19 @@ describe('services_InteropService', function() {
 			sourcePath: '',
 		};
 
-		const module: Module = {
+		const module = makeImportModule({
 			type: ModuleType.Importer,
 			description: 'Test Import Module',
 			format: 'testing',
 			fileExtensions: ['test'],
-			isCustom: true,
-
-			onExec: async (context: CustomImportContext) => {
-				result.hasBeenExecuted = true;
-				result.sourcePath = context.sourcePath;
-			},
-		};
+		}, () => {
+			return new InteropService_Importer_Custom({
+				onExec: async (context: CustomImportContext) => {
+					result.hasBeenExecuted = true;
+					result.sourcePath = context.sourcePath;
+				},
+			});
+		});
 
 		const service = InteropService.instance();
 		service.registerModule(module);
@@ -577,6 +596,7 @@ describe('services_InteropService', function() {
 
 		const filePath = `${exportDir()}/example.test`;
 
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 		const result: any = {
 			destPath: '',
 			itemTypes: [],
@@ -586,42 +606,48 @@ describe('services_InteropService', function() {
 			closeCalled: false,
 		};
 
-		const module: Module = {
+		const module: Module = makeExportModule({
 			type: ModuleType.Exporter,
 			description: 'Test Export Module',
-			format: 'testing',
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+			format: 'testing' as any,
 			fileExtensions: ['test'],
-			isCustom: true,
+		}, () => {
+			return new InteropService_Exporter_Custom({
+				onInit: async (context: CustomExportContext) => {
+					result.destPath = context.destPath;
+				},
 
-			onInit: async (context: CustomExportContext) => {
-				result.destPath = context.destPath;
-			},
+				// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+				onProcessItem: async (_context: CustomExportContext, itemType: number, item: any) => {
+					result.itemTypes.push(itemType);
+					result.items.push(item);
+				},
 
-			onProcessItem: async (_context: CustomExportContext, itemType: number, item: any) => {
-				result.itemTypes.push(itemType);
-				result.items.push(item);
-			},
+				// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+				onProcessResource: async (_context: CustomExportContext, resource: any, filePath: string) => {
+					result.resources.push(resource);
+					result.filePaths.push(filePath);
+				},
 
-			onProcessResource: async (_context: CustomExportContext, resource: any, filePath: string) => {
-				result.resources.push(resource);
-				result.filePaths.push(filePath);
-			},
-
-			onClose: async (_context: CustomExportContext) => {
-				result.closeCalled = true;
-			},
-		};
+				onClose: async (_context: CustomExportContext) => {
+					result.closeCalled = true;
+				},
+			});
+		});
 
 		const service = InteropService.instance();
 		service.registerModule(module);
 		await service.export({
-			format: 'testing',
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+			format: 'testing' as any,
 			path: filePath,
 		});
 
 		expect(result.destPath).toBe(filePath);
 		expect(result.itemTypes.sort().join('_')).toBe('1_1_2_4');
 		expect(result.items.length).toBe(4);
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 		expect(result.items.map((o: any) => o.title).sort().join('_')).toBe('folder1_note1_note2_photo.jpg');
 		expect(result.resources.length).toBe(1);
 		expect(result.resources[0].title).toBe('photo.jpg');

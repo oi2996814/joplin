@@ -1,4 +1,4 @@
-const { app } = require('./app.js');
+const app = require('./app').default;
 const Note = require('@joplin/lib/models/Note').default;
 const Folder = require('@joplin/lib/models/Folder').default;
 const Tag = require('@joplin/lib/models/Tag').default;
@@ -12,7 +12,7 @@ async function handleAutocompletionPromise(line) {
 	const words = getArguments(line);
 	// If there is only one word and it is not already a command name then you
 	// should look for commands it could be
-	if (words.length == 1) {
+	if (words.length === 1) {
 		if (names.indexOf(words[0]) === -1) {
 			const x = names.filter(n => n.indexOf(words[0]) === 0);
 			if (x.length === 1) {
@@ -78,38 +78,38 @@ async function handleAutocompletionPromise(line) {
 
 		const currentFolder = app().currentFolder();
 
-		if (argName == 'note' || argName == 'note-pattern') {
+		if (argName === 'note' || argName === 'note-pattern') {
 			const notes = currentFolder ? await Note.previews(currentFolder.id, { titlePattern: `${next}*` }) : [];
 			l.push(...notes.map(n => n.title));
 		}
 
-		if (argName == 'notebook') {
+		if (argName === 'notebook') {
 			const folders = await Folder.search({ titlePattern: `${next}*` });
 			l.push(...folders.map(n => n.title));
 		}
 
-		if (argName == 'item') {
+		if (argName === 'item') {
 			const notes = currentFolder ? await Note.previews(currentFolder.id, { titlePattern: `${next}*` }) : [];
 			const folders = await Folder.search({ titlePattern: `${next}*` });
 			l.push(...notes.map(n => n.title), folders.map(n => n.title));
 		}
 
-		if (argName == 'tag') {
+		if (argName === 'tag') {
 			const tags = await Tag.search({ titlePattern: `${next}*` });
 			l.push(...tags.map(n => n.title));
 		}
 
-		if (argName == 'file') {
+		if (argName === 'file') {
 			const files = await fs.readdir('.');
 			l.push(...files);
 		}
 
-		if (argName == 'tag-command') {
+		if (argName === 'tag-command') {
 			const c = filterList(['add', 'remove', 'list', 'notetags'], next);
 			l.push(...c);
 		}
 
-		if (argName == 'todo-command') {
+		if (argName === 'todo-command') {
 			const c = filterList(['toggle', 'clear'], next);
 			l.push(...c);
 		}
@@ -124,14 +124,15 @@ async function handleAutocompletionPromise(line) {
 	return line;
 }
 function handleAutocompletion(str, callback) {
-	handleAutocompletionPromise(str).then(function(res) {
+// eslint-disable-next-line promise/prefer-await-to-then -- Old code before rule was applied
+	handleAutocompletionPromise(str).then((res) => {
 		callback(undefined, res);
 	});
 }
 function toCommandLine(args) {
 	if (Array.isArray(args)) {
 		return args
-			.map(function(a) {
+			.map((a) => {
 				if (a.indexOf('"') !== -1 || a.indexOf(' ') !== -1) {
 					return `'${a}'`;
 				} else if (a.indexOf('\'') !== -1) {

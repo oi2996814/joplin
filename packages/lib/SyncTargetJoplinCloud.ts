@@ -38,8 +38,39 @@ export default class SyncTargetJoplinCloud extends BaseSyncTarget {
 		return false;
 	}
 
-	public async isAuthenticated() {
+	public static supportsRecursiveLinkedNotes(): boolean {
+		// Not currently working:
+		// https://github.com/laurent22/joplin/pull/6661
+		// https://github.com/laurent22/joplin/pull/6600
+		return false;
+	}
+
+	public static override supportsShare(): boolean {
 		return true;
+	}
+
+	public async isAuthenticated() {
+		try {
+			const fileApi = await this.fileApi();
+			const api = fileApi.driver().api();
+			const sessionId = await api.sessionId();
+			return !!sessionId;
+		} catch (error) {
+			if (error.code === 403) {
+				return false;
+			}
+			throw error;
+		}
+	}
+
+	public authRouteName() {
+		return 'JoplinCloudLogin';
+	}
+
+	// While Joplin Cloud requires password, the new login method makes this
+	// information useless
+	public static requiresPassword() {
+		return false;
 	}
 
 	public async fileApi(): Promise<FileApi> {

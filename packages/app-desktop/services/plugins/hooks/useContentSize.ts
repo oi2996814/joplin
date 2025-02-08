@@ -6,6 +6,7 @@ interface Size {
 	hash: string;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 export default function(frameWindow: any, htmlHash: string, minWidth: number, minHeight: number, fitToContent: boolean, isReady: boolean) {
 	const [contentSize, setContentSize] = useState<Size>({
 		width: minWidth,
@@ -33,6 +34,7 @@ export default function(frameWindow: any, htmlHash: string, minWidth: number, mi
 
 	useEffect(() => {
 		updateContentSize(htmlHash);
+		// eslint-disable-next-line @seiyab/react-hooks/exhaustive-deps -- Old code before rule was applied
 	}, [htmlHash]);
 
 	useEffect(() => {
@@ -55,6 +57,7 @@ export default function(frameWindow: any, htmlHash: string, minWidth: number, mi
 		return () => {
 			clearInterval(updateFrameSizeIID);
 		};
+		// eslint-disable-next-line @seiyab/react-hooks/exhaustive-deps -- Old code before rule was applied
 	}, [fitToContent, isReady, minWidth, minHeight, htmlHash]);
 
 	return contentSize;

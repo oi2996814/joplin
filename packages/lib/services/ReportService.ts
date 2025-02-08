@@ -21,27 +21,33 @@ enum ReportItemType {
 	CloseList = 'closeList',
 }
 
-type RerportItemOrString = ReportItem | string;
+type ReportItemOrString = ReportItem | string;
 
-interface ReportSection {
+export type RetryAllHandler = ()=> void;
+export type RetryHandler = ()=> Promise<void>;
+export type IgnoreHandler = ()=> Promise<void>;
+
+export interface ReportSection {
 	title: string;
-	body: RerportItemOrString[];
+	body: ReportItemOrString[];
 	name?: string;
 	canRetryAll?: boolean;
-	retryAllHandler?: ()=> void;
+	retryAllHandler?: RetryAllHandler;
 }
 
-interface ReportItem {
+export interface ReportItem {
 	type?: ReportItemType;
 	key?: string;
 	text?: string;
 	canRetry?: boolean;
 	canRetryType?: CanRetryType;
-	retryHandler?: ()=> void;
+	retryHandler?: RetryHandler;
+	canIgnore?: boolean;
+	ignoreHandler?: IgnoreHandler;
 }
 
 export default class ReportService {
-	csvEscapeCell(cell: string) {
+	public csvEscapeCell(cell: string) {
 		cell = this.csvValueToString(cell);
 		const output = cell.replace(/"/, '""');
 		if (this.csvCellRequiresQuotes(cell, ',')) {
@@ -50,26 +56,27 @@ export default class ReportService {
 		return output;
 	}
 
-	csvCellRequiresQuotes(cell: string, delimiter: string) {
+	public csvCellRequiresQuotes(cell: string, delimiter: string) {
 		if (cell.indexOf('\n') >= 0) return true;
 		if (cell.indexOf('"') >= 0) return true;
 		if (cell.indexOf(delimiter) >= 0) return true;
 		return false;
 	}
 
-	csvValueToString(v: string) {
+	public csvValueToString(v: string) {
 		if (v === undefined || v === null) return '';
 		return v.toString();
 	}
 
-	csvCreateLine(row: string[]) {
+	public csvCreateLine(row: string[]) {
 		for (let i = 0; i < row.length; i++) {
 			row[i] = this.csvEscapeCell(row[i]);
 		}
 		return row.join(',');
 	}
 
-	csvCreate(rows: any[]) {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+	public csvCreate(rows: any[]) {
 		const output = [];
 		for (let i = 0; i < rows.length; i++) {
 			output.push(this.csvCreateLine(rows[i]));
@@ -77,7 +84,8 @@ export default class ReportService {
 		return output.join('\n');
 	}
 
-	async basicItemList(option: any = null) {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
+	public async basicItemList(option: any = null) {
 		if (!option) option = {};
 		if (!option.format) option.format = 'array';
 
@@ -100,7 +108,8 @@ export default class ReportService {
 		return option.format === 'csv' ? this.csvCreate(output) : output;
 	}
 
-	async syncStatus(syncTarget: number) {
+	public async syncStatus(syncTarget: number) {
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Old code before rule was applied
 		const output: any = {
 			items: {},
 			total: {},
@@ -110,6 +119,8 @@ export default class ReportService {
 		let syncedCount = 0;
 		for (let i = 0; i < BaseItem.syncItemDefinitions_.length; i++) {
 			const d = BaseItem.syncItemDefinitions_[i];
+			// ref: https://github.com/laurent22/joplin/issues/7940#issuecomment-1473709148
+			if (d.className === 'MasterKey') continue;
 			const ItemClass = BaseItem.getClass(d.className);
 			const o = {
 				total: await ItemClass.count(),
@@ -141,10 +152,11 @@ export default class ReportService {
 	}
 
 	private addRetryAllHandler(section: ReportSection): ReportSection {
+		// eslint-disable-next-line @typescript-eslint/ban-types -- Old code before rule was applied
 		const retryHandlers: Function[] = [];
 
 		for (let i = 0; i < section.body.length; i++) {
-			const item: RerportItemOrString = section.body[i];
+			const item: ReportItemOrString = section.body[i];
 			if (typeof item !== 'string' && item.canRetry) {
 				retryHandlers.push(item.retryHandler);
 			}
@@ -162,7 +174,7 @@ export default class ReportService {
 		return section;
 	}
 
-	async status(syncTarget: number): Promise<ReportSection[]> {
+	public async status(syncTarget: number): Promise<ReportSection[]> {
 		const r = await this.syncStatus(syncTarget);
 		const sections: ReportSection[] = [];
 		let section: ReportSection = null;
@@ -174,32 +186,64 @@ export default class ReportService {
 
 			section.body.push(_('These items will remain on the device but will not be uploaded to the sync target. In order to find these items, either search for the title or the ID (which is displayed in brackets above).'));
 
-			section.body.push({ type: ReportItemType.OpenList, key: 'disabledSyncItems' });
-
-			for (let i = 0; i < disabledItems.length; i++) {
-				const row = disabledItems[i];
-				let msg: string = '';
+			const processRow = (row: typeof disabledItems[0]) => {
+				let msg = '';
 				if (row.location === BaseItem.SYNC_ITEM_LOCATION_LOCAL) {
 					msg = _('%s (%s) could not be uploaded: %s', row.item.title, row.item.id, row.syncInfo.sync_disabled_reason);
 				} else {
 					msg = _('Item "%s" could not be downloaded: %s', row.syncInfo.item_id, row.syncInfo.sync_disabled_reason);
 				}
 
+				// row.item may be undefined when location !== SYNC_ITEM_LOCATION_LOCAL
+				const item = { type_: row.syncInfo.item_type, id: row.syncInfo.item_id };
 				section.body.push({
 					text: msg,
 					canRetry: true,
 					canRetryType: CanRetryType.ItemSync,
 					retryHandler: async () => {
-						await BaseItem.saveSyncEnabled(row.item.type_, row.item.id);
+						await BaseItem.saveSyncEnabled(item.type_, item.id);
+					},
+					canIgnore: !row.warning_ignored,
+					ignoreHandler: async () => {
+						await BaseItem.ignoreItemSyncWarning(syncTarget, item);
 					},
 				});
+			};
+
+			section.body.push({ type: ReportItemType.OpenList, key: 'disabledSyncItems' });
+
+			let hasIgnoredItems = false;
+			let hasUnignoredItems = false;
+			for (const row of disabledItems) {
+				if (!row.warning_ignored) {
+					processRow(row);
+					hasUnignoredItems = true;
+				} else {
+					hasIgnoredItems = true;
+				}
+			}
+
+			if (!hasUnignoredItems) {
+				section.body.push(_('All item sync failures have been marked as "ignored".'));
 			}
 
 			section.body.push({ type: ReportItemType.CloseList });
-
 			section = this.addRetryAllHandler(section);
-
 			sections.push(section);
+
+
+			if (hasIgnoredItems) {
+				section = { title: _('Ignored items that cannot be synchronised'), body: [] };
+				section.body.push(_('These items failed to sync, but have been marked as "ignored". They won\'t cause the sync warning to appear, but still aren\'t synced. To unignore, click "retry".'));
+				section.body.push({ type: ReportItemType.OpenList, key: 'ignoredDisabledItems' });
+				for (const row of disabledItems) {
+					if (row.warning_ignored) {
+						processRow(row);
+					}
+				}
+				section.body.push({ type: ReportItemType.CloseList });
+				sections.push(section);
+			}
 		}
 
 		const decryptionDisabledItems = await DecryptionWorker.instance().decryptionDisabledItems();
@@ -263,11 +307,13 @@ export default class ReportService {
 					canRetry: true,
 					canRetryType: CanRetryType.ResourceDownload,
 					retryHandler: async () => {
-						await Resource.resetErrorStatus(row.resource_id);
+						await Resource.resetFetchErrorStatus(row.resource_id);
 						void ResourceFetcher.instance().autoAddResources();
 					},
 				});
 			}
+
+			section = this.addRetryAllHandler(section);
 
 			sections.push(section);
 		}
@@ -286,10 +332,10 @@ export default class ReportService {
 
 		sections.push(section);
 
-		section = { title: _('Folders'), body: [] };
+		section = { title: _('Notebooks'), body: [] };
 
 		const folders = await Folder.all({
-			order: { by: 'title', dir: 'ASC' },
+			order: [{ by: 'title', dir: 'ASC' }],
 			caseInsensitive: true,
 		});
 
